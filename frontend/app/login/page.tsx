@@ -114,13 +114,13 @@ export default function LoginPage() {
             <div
               className="hidden bg-cover lg:block lg:w-1/2"
               style={{
-                backgroundImage: "url('/city.png')",
+                backgroundImage: "url('/city-card.jpg')",
               }}
             />
 
             <div className="w-full px-6 py-6 md:px-8 lg:w-1/2">
               <div className="flex justify-center mx-auto">
-                <PulseLogo size="lg" />
+                <PulseLogo size="lg" className="scale-150 my-2" />
               </div>
 
               <div className="flex items-center justify-center mt-4">
@@ -238,13 +238,13 @@ export default function LoginPage() {
             <div
               className="hidden bg-cover lg:block lg:w-1/2"
               style={{
-                backgroundImage: "url('/city.png')",
+                backgroundImage: "url('/city-card.jpg')",
               }}
             />
 
             <div className="w-full px-6 py-6 md:px-8 lg:w-1/2">
               <div className="flex justify-center mx-auto">
-                <PulseLogo size="lg" />
+                <PulseLogo size="lg" className="scale-150 my-2" />
               </div>
 
               <div className="flex items-center justify-center mt-4">
