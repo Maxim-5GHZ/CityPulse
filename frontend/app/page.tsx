@@ -8,55 +8,66 @@ const SITE_URL = 'https://hotcodeband.ru';
 const GITHUB_URL = 'https://github.com/Maxim-5GHZ/CityPulse';
 
 export default function HomePage() {
+  const cardCls =
+    'w-full max-w-xl rounded-[32px] border border-white/60 bg-white/40 px-6 py-6 backdrop-blur-xl ' +
+    'backdrop-saturate-150 md:px-8 ' +
+    'shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_24px_60px_-16px_rgba(20,26,38,0.35)] ' +
+    'dark:border-white/20 dark:bg-gray-900/40';
+
+  const glassBtn =
+    'inline-block min-w-40 rounded-full bg-[#141a26]/90 px-6 py-2.5 text-center text-sm font-medium tracking-wide text-white ' +
+    'backdrop-blur-xl transition hover:bg-[#141a26] ' +
+    'shadow-[inset_0_1px_1px_rgba(255,255,255,0.25),0_14px_30px_-10px_rgba(20,26,38,0.6)] ' +
+    'focus:outline-none focus:ring-2 focus:ring-blue-300/60';
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col px-6 py-6">
-      <header className="flex items-center justify-end">
-        <Link
-          href="/login"
-          className="inline-block rounded-lg border px-5 py-2 text-sm font-medium hover:bg-gray-50"
-        >
-          Войти
-        </Link>
-      </header>
+    <section
+      className="relative min-h-screen bg-cover bg-center"
+      style={{ backgroundImage: "url('/city.png')" }}
+    >
+      {/* Та же вуаль, что на /login — стекло читается и в светлой, и в тёмной теме */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40 dark:from-black/60 dark:via-black/40 dark:to-black/70"
+      />
 
-      <div className="flex flex-1 flex-col items-center justify-center gap-6">
-        <PulseLogo as="h1" size="lg" />
+      <main className="relative mx-auto flex min-h-screen w-full max-w-xl flex-col px-6 py-6">
+        <header className="flex items-center justify-end">
+          <Link
+            href="/login"
+            className="inline-block rounded-full border border-white/60 bg-white/40 px-4 py-1.5 text-sm font-medium text-gray-700 backdrop-blur-xl transition hover:bg-white/60 dark:border-white/20 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20"
+          >
+            Войти
+          </Link>
+        </header>
 
-        <div className="flex flex-col items-center gap-4 sm:flex-row">
-          <figure className="flex flex-col items-center gap-2">
-            <a href={SITE_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
-              <QRCode value={SITE_URL} size={180} />
-            </a>
-            <figcaption className="text-sm text-gray-500">Сайт</figcaption>
-          </figure>
-          <figure className="flex flex-col items-center gap-2">
-            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
-              <QRCode value={GITHUB_URL} size={180} />
-            </a>
-            <figcaption className="text-sm text-gray-500">GitHub</figcaption>
-          </figure>
+        <div className="flex flex-1 flex-col items-center justify-center py-6">
+          <div className={`${cardCls} flex flex-col items-center gap-4`}>
+            <div className="mx-auto flex justify-center">
+              <PulseLogo as="h1" size="lg" className="scale-150 my-2" />
+            </div>
+
+            <div className="flex flex-col items-center gap-4 sm:flex-row">
+              <figure className="flex flex-col items-center gap-2">
+                <a href={SITE_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border border-white/60 bg-white p-4 shadow-[inset_0_2px_4px_rgba(0,0,0,0.06),inset_0_-1px_2px_rgba(255,255,255,0.9),0_6px_18px_-8px_rgba(20,26,38,0.4)]">
+                  <QRCode value={SITE_URL} size={180} />
+                </a>
+                <figcaption className="text-sm font-medium text-gray-600 dark:text-gray-200">Наш Сайт</figcaption>
+              </figure>
+              <figure className="flex flex-col items-center gap-2">
+                <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border border-white/60 bg-white p-4 shadow-[inset_0_2px_4px_rgba(0,0,0,0.06),inset_0_-1px_2px_rgba(255,255,255,0.9),0_6px_18px_-8px_rgba(20,26,38,0.4)]">
+                  <QRCode value={GITHUB_URL} size={180} />
+                </a>
+                <figcaption className="text-sm font-medium text-gray-600 dark:text-gray-200">Наш GitHub</figcaption>
+              </figure>
+            </div>
+            
+            
+
+            
+          </div>
         </div>
-        <p className="text-sm text-gray-500">Наведи камеру — откроется ссылка</p>
-
-        <nav className="flex flex-col items-center gap-3 sm:flex-row">
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block min-w-40 rounded-lg bg-blue-600 px-6 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700"
-          >
-            GitHub
-          </a>
-          <a
-            href={SITE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block min-w-40 rounded-lg bg-blue-600 px-6 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700"
-          >
-            Сайт
-          </a>
-        </nav>
-      </div>
-    </main>
+      </main>
+    </section>
   );
 }

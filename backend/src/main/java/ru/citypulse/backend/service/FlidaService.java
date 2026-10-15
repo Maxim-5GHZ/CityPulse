@@ -10,6 +10,8 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -33,6 +35,7 @@ import ru.citypulse.backend.security.JwtService;
 @Service
 @RequiredArgsConstructor
 public class FlidaService {
+  private static final Logger log = LoggerFactory.getLogger(FlidaService.class);
   private final UserRepository users;
   private final JwtService jwt;
   private final FlidaProps props;
@@ -62,6 +65,7 @@ public class FlidaService {
         .queryParam("response_type", "code")
         .queryParam("client_id", props.getClientId())
         .queryParam("redirect_uri", props.getRedirectUri())
+        .queryParam("scope", "openid%20email%20profile")
         .queryParam("code_challenge", challenge(verifier))
         .queryParam("code_challenge_method", "S256")
         .queryParam("state", state)
@@ -74,15 +78,31 @@ public class FlidaService {
   public String handleCallback(String code, String state) {
     PendingLogin p = pending.remove(state);
     if (p == null || p.expiresAt() < System.currentTimeMillis()) {
+      log.warn(
+          "flida handleCallback: bad state, state={} pendingSize={} expired={}",
+          mask(state),
+          pending.size(),
+          p != null);
       throw new IllegalArgumentException("Сессия входа истекла или неверна, попробуй ещё раз");
     }
+    log.info(
+        "flida handleCallback: state ok, pendingSize={} codeLen={}",
+        pending.size(),
+        code.length());
     JsonNode info = userinfo(exchangeCode(code, p.verifier()));
     String sub = text(info, "sub");
     String email = text(info, "email");
+    boolean emailVerified = !info.has("email_verified") || info.get("email_verified").asBoolean(true);
+    log.info(
+        "flida userinfo: sub={} emailPresent={} emailVerified={} keys={}",
+        mask(sub),
+        email != null && !email.isBlank(),
+        emailVerified,
+        keys(info));
     if (sub == null || sub.isBlank() || email == null || email.isBlank()) {
       throw new IllegalArgumentException("Флида ID не отдал email, вход невозможен");
     }
-    if (info.has("email_verified") && !info.get("email_verified").asBoolean(true)) {
+    if (!emailVerified) {
       throw new IllegalArgumentException("Email во Флида ID не подтверждён");
     }
     String normalized = email.toLowerCase().trim();
@@ -118,16 +138,22 @@ public class FlidaService {
     h.setAccept(List.of(MediaType.APPLICATION_JSON));
     try {
       ResponseEntity<String> res = http.postForEntity(props.getTokenUri(), new HttpEntity<>(form, h), String.class);
+      log.info(
+          "flida exchange: status={} hasBody={}",
+          res.getStatusCode(),
+          res.getBody() != null);
       if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
         String at = text(json.readTree(res.getBody()), "access_token");
         if (at != null && !at.isBlank()) {
+          log.info("flida exchange: ok, accessTokenLen={}", at.length());
           return at;
         }
+        log.warn("flida exchange: 2xx but no access_token in body");
       }
     } catch (IllegalArgumentException e) {
       throw e;
     } catch (Exception e) {
-      // ниже — общая ошибка обмена
+      log.warn("flida exchange failed: uri={} err={}", props.getTokenUri(), e.toString(), e);
     }
     throw new IllegalArgumentException("Флида ID не обменял код на токены");
   }
@@ -139,13 +165,17 @@ public class FlidaService {
     try {
       ResponseEntity<String> res =
           http.exchange(props.getUserinfoUri(), HttpMethod.GET, new HttpEntity<>(h), String.class);
+      log.info(
+          "flida userinfo fetch: status={} hasBody={}",
+          res.getStatusCode(),
+          res.getBody() != null);
       if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
         return json.readTree(res.getBody());
       }
     } catch (IllegalArgumentException e) {
       throw e;
     } catch (Exception e) {
-      // ниже — общая ошибка профиля
+      log.warn("flida userinfo fetch failed: uri={} err={}", props.getUserinfoUri(), e.toString(), e);
     }
     throw new IllegalArgumentException("Не удалось получить профиль Флида ID");
   }
@@ -153,6 +183,18 @@ public class FlidaService {
   private static String text(JsonNode node, String field) {
     JsonNode v = node == null ? null : node.get(field);
     return v == null || v.isNull() ? null : v.asText();
+  }
+
+  private static String mask(String v) {
+    if (v == null || v.isBlank()) return "<empty>";
+    return v.length() <= 6 ? "***" : v.substring(0, 6) + "***";
+  }
+
+  private static String keys(JsonNode node) {
+    if (node == null || !node.isObject()) return "<none>";
+    java.util.List<String> names = new java.util.ArrayList<>();
+    node.fieldNames().forEachRemaining(names::add);
+    return String.join(",", names);
   }
 
   private String randomString(int bytes) {

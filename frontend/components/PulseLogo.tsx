@@ -7,6 +7,16 @@ type Size = 'sm' | 'md' | 'lg';
 const FONT_PX: Record<Size, number> = { sm: 20, md: 24, lg: 30 };
 const FONT_FAMILY = "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
+// Сдержанная палитра: база букв + акцент пика пульса (rgb-триплеты).
+const LIGHT_BASE: [number, number, number] = [30, 41, 59]; // slate-800
+const LIGHT_PEAK: [number, number, number] = [71, 100, 140]; // приглушённый стальной синий
+const DARK_BASE: [number, number, number] = [241, 245, 249]; // slate-100
+const DARK_PEAK: [number, number, number] = [255, 255, 255]; // чистый белый
+
+const CYCLE = 2.6; // период пробега волны, секунды
+// Треугольный «удар» шириной в 3 буквы: пик = 1, соседи = 0.5, дальше = 0.
+const bump = (d: number) => Math.max(0, 1 - Math.abs(d) / 2);
+
 interface PulseLogoProps {
   /** sm ≈ text-xl, md — средний, lg ≈ text-3xl */
   size?: Size;
@@ -18,7 +28,8 @@ interface PulseLogoProps {
 }
 
 /**
- * Название CityPulse на canvas: переливающийся градиент + пульсация свечения.
+ * Название CityPulse на canvas: волна пульса пробегает по буквам слева
+ * направо в спокойных slate-тонах. Без радуги и неона.
  * Текст продублирован скрытым span'ом — читается скринридерами и копируется.
  */
 export default function PulseLogo({
@@ -38,74 +49,99 @@ export default function PulseLogo({
 
     let raf = 0;
     let disposed = false;
+    const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    let isDark = darkQuery.matches;
     const fontPx = FONT_PX[size];
-    const pad = Math.ceil(fontPx * 1.1); // запас под свечение
+    const pad = Math.ceil(fontPx * 1.1); // запас под свечение и рост букв
     const font = `900 ${fontPx}px ${FONT_FAMILY}`;
+    const chars = text.split('');
 
+    // Высокое разрешение: бэкстор в 2× от DPR (до 6×) — та же CSS-геометрия, чётче текст.
     const setup = () => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min((window.devicePixelRatio || 1) * 2, 6);
       ctx.font = font;
-      const w = Math.ceil(ctx.measureText(text).width);
+      const starts: number[] = [0];
+      for (let i = 1; i <= chars.length; i++) {
+        starts.push(ctx.measureText(text.slice(0, i)).width);
+      }
+      const w = Math.ceil(starts[chars.length]);
       const h = Math.ceil(fontPx * 1.35);
       canvas.style.width = `${w + pad * 2}px`;
       canvas.style.height = `${h + pad * 2}px`;
       canvas.width = Math.ceil((w + pad * 2) * dpr);
       canvas.height = Math.ceil((h + pad * 2) * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      return { w, h };
+      return { starts, h };
     };
 
     let dims = setup();
+    const midY = () => pad + dims.h / 2;
 
-    const draw = (t: number) => {
-      const { w, h } = dims;
-      const W = w + pad * 2;
-      const H = h + pad * 2;
-      ctx.clearRect(0, 0, W, H);
-      const hue = (t * 45) % 360;
-      const grad = ctx.createLinearGradient(pad, 0, pad + w, 0);
-      grad.addColorStop(0, `hsl(${hue}, 90%, 60%)`);
-      grad.addColorStop(0.5, `hsl(${(hue + 60) % 360}, 90%, 62%)`);
-      grad.addColorStop(1, `hsl(${(hue + 120) % 360}, 90%, 60%)`);
-      // «дыхание» свечения, период ~1.4 c
-      const pulse = (Math.sin((t * Math.PI * 2) / 1.4) + 1) / 2;
+    const drawLetter = (ch: string, x: number, adv: number, intensity: number) => {
+      const [br, bg, bb] = isDark ? DARK_BASE : LIGHT_BASE;
+      const [pr, pg, pb] = isDark ? DARK_PEAK : LIGHT_PEAK;
+      const k = Math.max(0, Math.min(1, intensity));
+      const r = Math.round(br + (pr - br) * k);
+      const g = Math.round(bg + (pg - bg) * k);
+      const b = Math.round(bb + (pb - bb) * k);
+      const s = 1 + 0.05 * k;
+      ctx.save();
+      ctx.translate(pad + x + adv / 2, midY() - fontPx * 0.12 * k);
+      ctx.scale(s, s);
+      ctx.globalAlpha = 0.72 + 0.28 * k;
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.shadowBlur = 12 * k;
+      ctx.shadowColor = `rgba(100, 130, 180, ${0.5 * k})`;
+      ctx.fillText(ch, -adv / 2, 0);
+      ctx.restore();
+    };
+
+    const draw = (t: number, wave: boolean) => {
+      const { starts, h } = dims;
+      ctx.clearRect(0, 0, starts[chars.length] + pad * 2, h + pad * 2);
       ctx.font = font;
-      ctx.textAlign = 'center';
+      ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.shadowBlur = 6 + 20 * pulse;
-      ctx.shadowColor = `hsla(${(hue + 60) % 360}, 95%, 65%, ${0.55 + 0.35 * pulse})`;
-      ctx.globalAlpha = 0.9 + 0.1 * pulse;
-      ctx.fillStyle = grad;
-      ctx.fillText(text, pad + w / 2, pad + h / 2);
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur = 0;
+      // Пик волны идёт от -1 до n (за края), затем пауза до конца цикла.
+      const pos = wave ? ((t % CYCLE) / CYCLE) * (chars.length + 2) - 1 : -Infinity;
+      for (let i = 0; i < chars.length; i++) {
+        const intensity = wave ? bump(pos - i) : 0;
+        drawLetter(chars[i], starts[i], starts[i + 1] - starts[i], intensity);
+      }
     };
 
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!animated || reduceMotion) {
-      draw(0.6); // один статичный кадр
+    const wave = animated && !reduceMotion;
+    if (!wave) {
+      draw(0, false); // один статичный кадр
     } else {
       const start = performance.now();
       const loop = (now: number) => {
         if (disposed) return;
-        draw((now - start) / 1000);
+        draw((now - start) / 1000, true);
         raf = requestAnimationFrame(loop);
       };
       raf = requestAnimationFrame(loop);
     }
 
+    const onTheme = () => {
+      if (disposed) return;
+      isDark = darkQuery.matches;
+      if (!wave) draw(0, false);
+    };
+    darkQuery.addEventListener('change', onTheme);
+
     // Веб-шрифт мог подгрузиться позже — перемерить и перерисовать.
     document.fonts?.ready.then(() => {
       if (disposed) return;
       dims = setup();
-      if (!animated || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        draw(0.6);
-      }
+      if (!wave) draw(0, false);
     });
 
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      darkQuery.removeEventListener('change', onTheme);
     };
   }, [size, text, animated]);
 

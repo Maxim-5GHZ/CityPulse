@@ -32,7 +32,7 @@ export default function FlidaFinishPage() {
   useEffect(() => {
     if (!ready) return;
     if (token) {
-      router.replace('/');
+      router.replace('/workspace');
       return;
     }
     const hash = window.location.hash;
@@ -43,7 +43,7 @@ export default function FlidaFinishPage() {
     }
     applyToken(found);
     window.location.hash = '';
-    router.replace('/');
+    router.replace('/workspace');
   }, [ready, token, applyToken, router]);
 
   return (
