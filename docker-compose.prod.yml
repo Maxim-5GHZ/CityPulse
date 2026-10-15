@@ -1,0 +1,42 @@
+# CityPulse PROD: поверх base поднимает nginx с SSL (самоподпись).
+#   Сайт: https://localhost:${HTTPS_PORT:-443}
+# Запуск: make prod
+# Переопределяет backend/frontend на prod-сборку без volumes и hot reload.
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # Prod: Флида ходит через боевой origin, dev-значения из base перекрываем.
+    environment:
+      FLIDA_REDIRECT_URI: ${FLIDA_PROD_REDIRECT_URI:-https://hotcodeband.ru/flida/oauth2/callback}
+      FLIDA_FRONTEND_URL: ${FLIDA_PROD_FRONTEND_URL:-https://hotcodeband.ru}
+    # !reset — именно сброс, а не склейка: пустой [] в override БЕЗ тега
+    # base-volumes не убирает, и bind ./backend:/app прятал бы собранный jar.
+    volumes: !reset []
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        BACKEND_URL: http://backend:8080
+    volumes: !reset []
+    restart: unless-stopped
+
+  # TLS-терминация: HTTPS наружу, внутрь — plain HTTP.
+  # Серты генерируются ./nginx/gen-certs.sh (make prod делает это сам), в репо не коммитятся.
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: citypulse-nginx
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    restart: unless-stopped

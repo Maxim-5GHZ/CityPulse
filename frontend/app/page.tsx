@@ -1,0 +1,50 @@
+'use client';
+
+import Link from 'next/link';
+import QRCode from 'react-qr-code';
+
+const SITE_URL = 'https://hotcodeband.ru';
+const GITHUB_URL = 'https://github.com/Maxim-5GHZ/CityPulse';
+
+export default function HomePage() {
+  return (
+    <main className="mx-auto flex min-h-screen w-full max-w-xl flex-col px-6 py-6">
+      <header className="flex items-center justify-end">
+        <Link
+          href="/login"
+          className="inline-block rounded-lg border px-5 py-2 text-sm font-medium hover:bg-gray-50"
+        >
+          Войти
+        </Link>
+      </header>
+
+      <div className="flex flex-1 flex-col items-center justify-center gap-6">
+        <h1 className="text-3xl font-black tracking-tight">CityPulse</h1>
+
+        <a href={SITE_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
+          <QRCode value={SITE_URL} size={200} />
+        </a>
+        <p className="text-sm text-gray-500">Наведи камеру — откроется сайт</p>
+
+        <nav className="flex flex-col items-center gap-3 sm:flex-row">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block min-w-40 rounded-lg bg-blue-600 px-6 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700"
+          >
+            GitHub
+          </a>
+          <a
+            href={SITE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block min-w-40 rounded-lg bg-blue-600 px-6 py-2.5 text-center text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Сайт
+          </a>
+        </nav>
+      </div>
+    </main>
+  );
+}

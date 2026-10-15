@@ -1,0 +1,24 @@
+# ── софт ──
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# ── java ──
+target/
+*.class
+*.jar
+
+# ── секреты и локалка ──
+.env
+!.env.example
+nginx/certs/*.crt
+nginx/certs/*.key
+
+# ── прочее ──
+.DS_Store
+.idea/
+.vscode/
+all_code.txt
+pgdata/

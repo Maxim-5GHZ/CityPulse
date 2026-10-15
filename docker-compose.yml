@@ -1,0 +1,78 @@
+# CityPulse DEV: без SSL, с hot reload.
+#   Фронт:  http://localhost:${FRONTEND_PORT:-3000}
+#   Бэкенд: http://localhost:${BACKEND_PORT:-8080}/api/health
+# Запуск: make dev
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: citypulse-pg
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-citypulse}
+      POSTGRES_USER: ${POSTGRES_USER:-citypulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-citypulse}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-citypulse}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: citypulse-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-citypulse}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER:-citypulse}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD:-citypulse}
+      - JWT_SECRET=${JWT_SECRET:-change-me-to-at-least-32-chars-long-secret!}
+      - APP_ADMIN_EMAIL=${APP_ADMIN_EMAIL:-admin@citypulse.local}
+      - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-admin}
+      # Флида ID: секрет живёт только тут (контейнер бэкенда), фронту не пробрасывается.
+      - FLIDA_CLIENT_ID=${FLIDA_CLIENT_ID:-}
+      - FLIDA_CLIENT_SECRET=${FLIDA_CLIENT_SECRET:-}
+      - FLIDA_AUTHORIZE_URI=${FLIDA_AUTHORIZE_URI:-https://id.flida.ru/api/oidc/authorize}
+      - FLIDA_TOKEN_URI=${FLIDA_TOKEN_URI:-https://id.flida.ru/api/oidc/token}
+      - FLIDA_USERINFO_URI=${FLIDA_USERINFO_URI:-https://id.flida.ru/api/oidc/userinfo}
+      - FLIDA_REDIRECT_URI=${FLIDA_DEV_REDIRECT_URI:-http://localhost:3000/flida/oauth2/callback}
+      - FLIDA_FRONTEND_URL=${FLIDA_DEV_FRONTEND_URL:-http://localhost:3000}
+    volumes:
+      # Hot reload Java: код с хоста, devtools перезапускает контекст при изменении классов
+      - ./backend:/app
+      - maven-repo:/root/.m2
+      # target — в volume, чтобы root-сборка не сорила root-файлами на хост
+      - maven-target:/app/target
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: citypulse-frontend
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      # Серверный прокси /backend/* -> backend (браузер ходит same-origin, CORS не нужен)
+      - BACKEND_URL=http://backend:8080
+    volumes:
+      # Hot reload JS: код с хоста, next dev подхватывает изменения на лету
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  maven-repo:
+  maven-target:

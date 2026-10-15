@@ -1,0 +1,12 @@
+# DEV: mvn spring-boot:run + hot reload Java (используется в docker-compose.yml).
+# Как работает: inotifywait следит за src/ и pom.xml, при изменении делает
+# `mvn compile` -> spring-boot-devtools видит новые .class и перезапускает
+# контекст (в логах: "RestartedMainClassLoader"). Код монтируется volume'ом.
+FROM maven:3.9-eclipse-temurin-21
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends inotify-tools \
+  && rm -rf /var/lib/apt/lists/*
+COPY pom.xml ./
+RUN mvn -q dependency:go-offline
+EXPOSE 8080
+CMD ["sh","-c","(while true; do inotifywait -q -r -e modify,create,delete,move --exclude 'target/' src/ pom.xml; mvn -q -DskipTests compile; done) & exec mvn -DskipTests compile spring-boot:run"]
