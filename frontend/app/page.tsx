@@ -21,10 +21,21 @@ export default function HomePage() {
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
         <h1 className="text-3xl font-black tracking-tight">CityPulse</h1>
 
-        <a href={SITE_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
-          <QRCode value={SITE_URL} size={200} />
-        </a>
-        <p className="text-sm text-gray-500">Наведи камеру — откроется сайт</p>
+        <div className="flex flex-col items-center gap-4 sm:flex-row">
+          <figure className="flex flex-col items-center gap-2">
+            <a href={SITE_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
+              <QRCode value={SITE_URL} size={180} />
+            </a>
+            <figcaption className="text-sm text-gray-500">Сайт</figcaption>
+          </figure>
+          <figure className="flex flex-col items-center gap-2">
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="rounded-2xl border bg-white p-4 shadow-sm">
+              <QRCode value={GITHUB_URL} size={180} />
+            </a>
+            <figcaption className="text-sm text-gray-500">GitHub</figcaption>
+          </figure>
+        </div>
+        <p className="text-sm text-gray-500">Наведи камеру — откроется ссылка</p>
 
         <nav className="flex flex-col items-center gap-3 sm:flex-row">
           <a
