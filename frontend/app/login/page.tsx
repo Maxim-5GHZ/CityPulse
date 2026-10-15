@@ -105,12 +105,12 @@ export default function LoginPage() {
       <div className="container flex flex-col items-center justify-center min-h-screen px-6 py-4 mx-auto">
         <Link
           href="/"
-          className="w-full max-w-sm lg:max-w-4xl mb-3 text-left text-sm text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
+          className="w-full max-w-sm lg:max-w-3xl mb-3 text-left text-sm text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-200"
         >
           ← На главную
         </Link>
         {mode === 'signin' ? (
-          <div className="flex w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-lg dark:bg-gray-800 lg:max-w-4xl">
+          <div className="flex w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-lg dark:bg-gray-800 lg:max-w-3xl">
             <div
               className="hidden bg-cover lg:block lg:w-1/2"
               style={{
@@ -234,7 +234,7 @@ export default function LoginPage() {
             </div>
           </div>
         ) : (
-          <div className="flex w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-lg dark:bg-gray-800 lg:max-w-4xl">
+          <div className="flex w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-lg dark:bg-gray-800 lg:max-w-3xl">
             <div
               className="hidden bg-cover lg:block lg:w-1/2"
               style={{
@@ -252,7 +252,7 @@ export default function LoginPage() {
                 {tab('signup', 'Регистрация')}
               </div>
 
-              <p className="mt-2 text-lg text-center text-gray-600 dark:text-gray-200">Создайте аккаунт!</p>
+              
 
               <a
                 href="/backend/auth/flida/login"
