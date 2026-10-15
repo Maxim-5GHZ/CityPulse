@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import QRCode from 'react-qr-code';
+import PulseLogo from '@/components/PulseLogo';
 
 const SITE_URL = 'https://hotcodeband.ru';
 const GITHUB_URL = 'https://github.com/Maxim-5GHZ/CityPulse';
@@ -19,7 +20,7 @@ export default function HomePage() {
       </header>
 
       <div className="flex flex-1 flex-col items-center justify-center gap-6">
-        <h1 className="text-3xl font-black tracking-tight">CityPulse</h1>
+        <PulseLogo as="h1" size="lg" />
 
         <div className="flex flex-col items-center gap-4 sm:flex-row">
           <figure className="flex flex-col items-center gap-2">

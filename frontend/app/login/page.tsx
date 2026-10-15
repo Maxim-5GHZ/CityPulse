@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
@@ -100,7 +101,13 @@ export default function LoginPage() {
   );
 
   return (
-    <section className="bg-white dark:bg-gray-900">
+    <section className="relative bg-white dark:bg-gray-900">
+      <Link
+        href="/"
+        className="absolute left-4 top-4 z-10 rounded-lg px-3 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-white"
+      >
+        ← На главную
+      </Link>
       <div className="container flex items-center justify-center min-h-screen px-6 py-4 mx-auto">
         {mode === 'signin' ? (
           <div className="flex w-full max-w-sm mx-auto overflow-hidden bg-white rounded-lg shadow-lg dark:bg-gray-800 lg:max-w-4xl">
