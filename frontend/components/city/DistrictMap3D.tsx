@@ -436,6 +436,7 @@ export default function DistrictMap3D({
         const geom = new THREE.BoxGeometry(b.width * SCALE, h, b.height * SCALE);
         const mesh = new THREE.Mesh(geom, bodyMat);
         mesh.position.set(bx, h / 2, bz);
+        if (b.rotationDeg) mesh.rotation.y = (-b.rotationDeg * Math.PI) / 180;
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         mesh.userData = { buildingId: b.id };
@@ -446,16 +447,21 @@ export default function DistrictMap3D({
     });
 
     // Светящиеся потоки жителей вдоль путей Дейкстры.
+    // Рельсы частиц — сглажены Catmull-Rom (centripetal): огоньки режут углы, как люди.
     const pathToFlow = (ids: string[]): { pts: THREE.Vector3[]; cum: number[]; total: number } | null => {
-      const pts: THREE.Vector3[] = [];
+      const raw: THREE.Vector3[] = [];
       ids.forEach((id) => {
         const n = nodeMap.get(id);
         if (n) {
           const [px, pz] = to3D(n.x, n.y);
-          pts.push(new THREE.Vector3(px, FLOW_Y, pz));
+          raw.push(new THREE.Vector3(px, FLOW_Y, pz));
         }
       });
-      if (pts.length < 2) return null;
+      if (raw.length < 2) return null;
+      const pts =
+        raw.length >= 3
+          ? new THREE.CatmullRomCurve3(raw, false, 'centripetal').getSpacedPoints(raw.length * 6)
+          : raw;
       const cum = [0];
       for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + pts[i].distanceTo(pts[i - 1]));
       return { pts, cum, total: cum[cum.length - 1] };
@@ -537,7 +543,7 @@ export default function DistrictMap3D({
       const f = pathToFlow(activePathNodeIds);
       if (f && f.total > 0.01) {
         const tube = new THREE.Mesh(
-          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(f.pts), 64, 0.7, 6, false),
+          new THREE.TubeGeometry(new THREE.CatmullRomCurve3(f.pts, false, 'centripetal'), 64, 0.7, 6, false),
           new THREE.MeshBasicMaterial({ color: 0x22d3ee }),
         );
         group.add(tube);

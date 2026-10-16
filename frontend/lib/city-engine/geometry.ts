@@ -28,3 +28,23 @@ export function findClosestNodeId(x: number, y: number, nodes: GraphNode[]): str
   }
   return best;
 }
+
+/**
+ * Превращает ломаную графа в плавную пешеходную траекторию (квадратичные Безье).
+ * Человек срезает углы — маршрут выглядит «народной тропой», а не электросхемой.
+ */
+export function pointsToSmoothSvgPath(points: { x: number; y: number }[]): string {
+  if (points.length < 2) return '';
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const xc = (points[i].x + points[i + 1].x) / 2;
+    const yc = (points[i].y + points[i + 1].y) / 2;
+    d += ` Q ${points[i].x} ${points[i].y}, ${xc} ${yc}`;
+  }
+  const last = points[points.length - 1];
+  d += ` L ${last.x} ${last.y}`;
+  return d;
+}

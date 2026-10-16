@@ -4,6 +4,7 @@ import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { DistrictScenario, GraphNode, GraphEdge, Building } from '@/lib/city-engine/types';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
 import DistrictContextMenu from './DistrictContextMenu';
+import { pointsToSmoothSvgPath } from '@/lib/city-engine/geometry';
 
 export type ToolMode =
   | 'select'
@@ -187,11 +188,13 @@ export default function DistrictMap({
     }
   };
 
-  const isSegmentActive = (u: string, v: string) => {
-    const idxU = activePathNodeIds.indexOf(u);
-    const idxV = activePathNodeIds.indexOf(v);
-    return idxU !== -1 && idxV !== -1 && Math.abs(idxU - idxV) === 1;
-  };
+  // Плавная «народная тропа»: путь Дейкстры сплайном Безье вместо ломаной.
+  const activePathD = pointsToSmoothSvgPath(
+    activePathNodeIds
+      .map((id) => nodeMap.get(id))
+      .filter((n): n is GraphNode => !!n)
+      .map((n) => ({ x: n.x, y: n.y })),
+  );
 
   const roundaboutCenters = scenario.nodes.filter((n) => n.type === 'roundabout');
   const menuEdge = contextMenu ? scenario.edges.find((e) => e.id === contextMenu.edgeId) : undefined;
@@ -290,7 +293,7 @@ export default function DistrictMap({
               y2={t.y2}
               stroke={selectedEdgeId === edge.id ? '#3b82f6' : ROAD_CASING}
               strokeWidth={w + 6}
-              strokeLinecap="butt"
+              strokeLinecap="round"
             />
           );
         })}
@@ -311,7 +314,7 @@ export default function DistrictMap({
               y2={t.y2}
               stroke={ROAD_ASPHALT}
               strokeWidth={edge.lanes === 4 ? 30 : 18}
-              strokeLinecap="butt"
+              strokeLinecap="round"
             />
           );
         })}
@@ -352,7 +355,7 @@ export default function DistrictMap({
                   y2={t.y2 + ny * off}
                   stroke="#94a3b8"
                   strokeWidth={5}
-                  strokeLinecap="butt"
+                  strokeLinecap="round"
                 />
               )}
               {edge.hasSidewalkRight && (
@@ -363,7 +366,7 @@ export default function DistrictMap({
                   y2={t.y2 - ny * off}
                   stroke="#94a3b8"
                   strokeWidth={5}
-                  strokeLinecap="butt"
+                  strokeLinecap="round"
                 />
               )}
               {is4Lanes ? (
@@ -483,13 +486,25 @@ export default function DistrictMap({
           );
         })}
 
+        {/* Активный путь Дейкстры — единый плавный сплайн поверх полотен */}
+        {activePathD && (
+          <path
+            d={activePathD}
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth={5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+        )}
+
         {/* Интерактив рёбер: оверлеи + хит-зоны */}
         {scenario.edges.map((edge) => {
           const from = nodeMap.get(edge.from);
           const to = nodeMap.get(edge.to);
           if (!from || !to) return null;
           const isBlocked = !edge.isActive;
-          const isActiveInPath = isSegmentActive(edge.from, edge.to);
           return (
             <g
               key={`hit-${edge.id}`}
@@ -499,9 +514,6 @@ export default function DistrictMap({
             >
               {isBlocked && (
                 <circle cx={(from.x + to.x) / 2} cy={(from.y + to.y) / 2} r="8" fill="#dc2626" stroke="#ffffff" strokeWidth="2" />
-              )}
-              {isActiveInPath && !isBlocked && (
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#3b82f6" strokeWidth={4} strokeDasharray="5 4" />
               )}
               <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth={24} />
             </g>
@@ -543,10 +555,16 @@ export default function DistrictMap({
               </g>
             );
           }
+          const cx = b.x + b.width / 2;
+          const cy = b.y + b.height / 2;
           return (
-            <g key={b.id} onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}>
-              <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={4} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
-              <text x={b.x + b.width / 2} y={b.y + b.height / 2 + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
+            <g
+              key={b.id}
+              transform={b.rotationDeg ? `rotate(${b.rotationDeg} ${cx} ${cy})` : undefined}
+              onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
+            >
+              <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
+              <text x={cx} y={cy + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                 {b.name}
               </text>
             </g>

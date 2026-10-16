@@ -3,10 +3,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/auth';
 import AppHeader from '@/components/AppHeader';
 import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
-import DistrictMap3D from '@/components/city/DistrictMap3D';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
 import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
@@ -16,6 +16,16 @@ import { computePolygonAreaM2, findClosestNodeId } from '@/lib/city-engine/geome
 import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
 import { DistrictScenario, Building, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
 import { listProjects, createProject, updateProject, getProject, ProjectSummary } from '@/lib/projectApi';
+
+// Deck.gl держит WebGL-контекст — только динамический импорт без SSR.
+const DeckCityView = dynamic(() => import('@/components/city/DeckCityView'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[560px] w-full items-center justify-center rounded-xl border border-gray-700 bg-[#161a22] font-mono text-sm text-gray-400">
+      Загрузка 3D-двойника Deck.gl…
+    </div>
+  ),
+});
 
 export default function WorkspacePage() {
   const { ready, token } = useAuth();
@@ -476,7 +486,7 @@ export default function WorkspacePage() {
                   }
                 />
               ) : (
-                <DistrictMap3D
+                <DeckCityView
                   scenario={currentScenario}
                   selectedBuildingId={selectedBuildingId}
                   onSelectBuilding={(id) => setSelectedBuildingId(id)}
