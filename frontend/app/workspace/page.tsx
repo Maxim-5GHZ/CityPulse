@@ -10,7 +10,7 @@ import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
 import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
-import { EMPTY_DISTRICT, OBNINSK_MARX_DISTRICT } from '@/lib/city-engine/presets';
+import { EMPTY_DISTRICT, OBNINSK_2040_DISTRICT } from '@/lib/city-engine/presets';
 import { calculateMetrics } from '@/lib/city-engine/metrics';
 import { computePolygonAreaM2, findClosestNodeId } from '@/lib/city-engine/geometry';
 import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
@@ -31,9 +31,10 @@ export default function WorkspacePage() {
   const { ready, token } = useAuth();
   const router = useRouter();
 
-  const [baseScenario, setBaseScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
-  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  // Вход — сразу в район: жюри видит схему, а не пустой холст.
+  const [baseScenario, setBaseScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
+  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>('ob51-b3');
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
@@ -402,10 +403,11 @@ export default function WorkspacePage() {
             toolMode={toolMode}
             onToolModeChange={setToolMode}
             onLoadPreset={() => {
-              setCurrentScenario(OBNINSK_MARX_DISTRICT);
-              setBaseScenario(OBNINSK_MARX_DISTRICT);
+              setCurrentScenario(OBNINSK_2040_DISTRICT);
+              setBaseScenario(OBNINSK_2040_DISTRICT);
               setCurrentProjectId(null);
               setProjectName('51-й микрорайон (Обнинск)');
+              setSelectedBuildingId('ob51-b3');
               showHint('Загружен мастер-план Обнинска');
             }}
             onClear={() => {
@@ -413,6 +415,7 @@ export default function WorkspacePage() {
               setBaseScenario(EMPTY_DISTRICT);
               setCurrentProjectId(null);
               setProjectName('Новый чертёж');
+              setSelectedBuildingId(null);
               showHint('Холст очищен');
             }}
             onOpenProjects={() => setShowProjectsModal(true)}
