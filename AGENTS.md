@@ -2,7 +2,7 @@
 
 Правила для агентов и людей. Все примеры — из текущего кода, ничего не выдумывать:
 новые решения сверяй с `frontend/app/login/page.tsx` (эталон форм),
-`frontend/app/page.tsx` (эталон лендинга) и
+`frontend/app/page.tsx` (эталон deck-презентации для жюри) и
 `frontend/components/PulseLogo.tsx` (эталон canvas/доступности).
 
 ## Стек и запуск
@@ -92,10 +92,11 @@
 - e2e на общей базе: правило «создал — удали» (`scripts/e2e.sh`, префикс `e2e-`).
   Раз есть POST — обязан быть DELETE.
 
-## Liquid Glass — экраны с фото-фоном (`/`, `/login`, `/workspace`)
+## Liquid Glass — экраны с фото-фоном (`/`, `/login`, `/workspace`, `/about`)
 
-- Действует на `/`, `/login` и `/workspace` (каркас: приветствие + сетка скелетонов,
-  без контента): поверх базовых правил. Остальной UI — по разделу выше.
+- Действует на `/` (deck, см. раздел Презентация), `/login`, `/workspace` (каркас:
+  приветствие + сетка скелетонов, без контента) и `/about` (контакты + разработчики):
+  поверх базовых правил. Остальной UI — по разделу выше.
 - Фон общий: `relative.min-h-screen.bg-cover.bg-center` со
   `style={{ backgroundImage: "url('/city.png')" }}` (`/city.png` лежит в `frontend/public/`,
   Next раздаёт только оттуда). На `/workspace` фон натянут на всю страницу,
@@ -107,13 +108,16 @@
   `backdrop-blur-xl backdrop-saturate-150`, `border-white/60`,
   объём: `inset 1px 1px 2px rgba(255,255,255,0.8)` +
   `inset -1px -1px 2px rgba(0,0,0,0.05)` + мягкая внешняя тень.
-  Ширина разная: `/login` — `max-w-md`, `/` — `max-w-xl` (шире под два QR в ряд),
+  Ширина разная: `/login` — `max-w-md`, слайд `/` и карточка `/about` — `max-w-xl`
+  (шире под два QR в ряд),
   `/workspace` — `max-w-4xl` (каркас под сетку виджетов `sm:grid-cols-2 lg:grid-cols-3`).
-- Шапка-ссылка («Войти» на `/`, «← На главную» на `/login`) — стеклянная пилюля:
+- Шапка-ссылка («Войти» на `/`, «← На главную» на `/login` и `/about`) — стеклянная пилюля:
   `rounded-full border-white/60 bg-white/40 px-4 py-1.5 backdrop-blur-xl hover:bg-white/60`
-  (`dark:border-white/20 dark:bg-white/10`). На `/` кроме неё в шапке ничего нет.
-- Логотип: `<PulseLogo as="h1" size="lg" className="scale-150 my-2">` в обёртке
-  `mx-auto flex justify-center`.
+  (`dark:border-white/20 dark:bg-white/10`). На `/` в шапке слева
+  `<PulseLogo as="span" size="lg">` (клик — к началу deck), справа две такие пилюли:
+  `Контакты` (Link → `/about`) + `Войти` / `В интерфейс`.
+- Логотип: `<PulseLogo as="span" size="lg" className="scale-150 my-2">` в обёртке
+  `mx-auto flex justify-center` (h1 — заголовок страницы/слайда, не лого).
 - Специфика `/login`: табы — сегментированный контрол (`rounded-full bg-white/40 p-1`,
   активный таб — выпуклая пилюля `rounded-full bg-white shadow`); инпуты и кнопка
   Флиды — пилюли `rounded-full` с линзой (`inset 0 2px 4px rgba(0,0,0,0.06)` +
@@ -122,15 +126,78 @@
   `inset 0 1px 1px rgba(255,255,255,0.25)`; ошибки —
   `border-red-200/70 bg-red-50/80`; разделитель — `w-1/5 border-b border-white/70` +
   `text-xs uppercase text-gray-500`.
-- Специфика `/`: QR-ряд `flex-col sm:flex-row`, QR-ссылка обязана быть сплошной
+- Специфика `/` и `/about`: QR-ряд `flex-col sm:flex-row`, QR-ссылка обязана быть сплошной
   `bg-white` (иначе не сканируется): `rounded-2xl border-white/60 p-4` + линза-тени;
   подписи — `text-sm font-medium text-gray-600` (`dark:text-gray-200`). QR — `size={180}`
-  через `react-qr-code`, URL — константы `SITE_URL`/`GITHUB_URL` вверху `page.tsx`.
+  через `react-qr-code`, URL — константы `SITE_URL`/`GITHUB_URL` вверху файла
+  (на `/` — инлайн-компонент `QrRow` в `page.tsx`, на `/about` — та же разметка).
 - Интерактив общий: всё кликабельное — `transition-all duration-200 ease-out
   hover:scale-[1.05] active:scale-[0.98]` (+ `transform-gpu` на стекле,
   `motion-reduce:transform-none motion-reduce:transition-none`); глазик —
   `hover:scale-110`; инпуты — деликатнее `hover:scale-[1.02] focus:scale-[1.02]`
   (во всю ширину, иначе упрутся в края); `bg-white` у QR и тени при этом не трогать.
+
+## Презентация `/` — deck для жюри (до регистрации)
+
+- Живёт в одном `frontend/app/page.tsx` (~250 строк), новых зависимостей и правок
+  `tailwind.config.js` нет (`app/**/*` уже покрыт `content`). Пока только hero;
+  середину докинем позже (пустые заглушки не показывать жюри), Контакты — отдельная
+  страница `/about` (QR + ссылки + заглушка «Разработчики»),
+  интерактивы — в `frontend/components/pitch/` (фильтр, лесенка, табы, ROI).
+- Модель: `interface Slide { id, badge, title, subtitle, content }`, массив `slides`,
+  состояние `currentSlide + isTransitioning` (600мс). Навигация —
+  `goToSlide/next/prev` (`useCallback`, цель клемпится в `goToSlide`, переход
+  блокируется флагом `isTransitioning`): wheel с проверкой `scrollHeight` (при зуме
+  сначала домотать контент, `preventDefault` + троттл 700мс), `keydown`
+  (стрелки/PageUp/PageDown/Space, игнор `INPUT/TEXTAREA/SELECT`, Space игнорить на
+  `button/a`), тач-свайп `>50px`. Все слушатели
+  (`wheel/keydown/touchstart/touchend`) чистятся в cleanup.
+- Каркас слайда — стекло с `/`: `h-screen w-screen overflow-hidden bg-cover bg-center` +
+  `url('/city.png')` + та же вуаль (`from-white/30 via-white/10 to-white/40`,
+  `dark:from-black/60 dark:via-black/40 dark:to-black/70`). Тело —
+  `overflow-y-auto` со скрытым скроллбаром (`[scrollbar-width:none]
+  [&::-webkit-scrollbar]:hidden`, класса `no-scrollbar` в проекте нет — не
+  использовать). Центрирование через `m-auto` на контенте, не `justify-center`
+  (иначе верх переполненного слайда уйдёт под шапку). Смена слайда — только
+  существующий `motion-safe:animate-fade-in` (`fade-in` в конфиге);
+  `animate-fadeIn`/`animate-ping` запрещены — их нет в конфиге.
+- Хедер `/`: `justify-between` — слева кнопка с `<PulseLogo as="span" size="lg">`
+  (к началу deck, `aria-label`), центр — дотсы (`hidden lg:flex`, активный
+  `w-8 bg-gray-800 dark:bg-white`, остальные `w-2 bg-gray-300`, каждому
+  `aria-label="Слайд N"` + `aria-current` + `title`), справа две стеклянные пилюли
+  (`glassPillSm` без `min-w` — компактные, иначе разъедутся на мобиле):
+  `Контакты` (Link → `/about`) + `Войти` / `В интерфейс`
+  (`useAuth().token`, только существующие `/login`/`/workspace`). Футер: счётчик
+  `01/NN` (`font-mono`) + `↑/↓` (`w-10 h-10 rounded-full` на тёмном стекле сабмита,
+  `aria-label`+`title`, `disabled:opacity-40 disabled:pointer-events-none`).
+- Слайд 1 (hero): карточка `cardCls` с `/` (`max-w-xl`), `<PulseLogo as="span"
+  size="lg" className="scale-150 my-2 sm:scale-[2.25] sm:my-16">` в
+  `mx-auto flex justify-center` (внутри
+  слайда не `h1` — `h1` уже заголовок слайда; на десктопе лого в 1.5 раза крупнее
+  базового, `sm:my-16` компенсирует разлёт CSS-скейла, иначе налезет на QR), бейдж-пилюля (`rounded-full
+  border-white/60 bg-white/40`, `text-xs uppercase text-gray-600`,
+  `dark:bg-white/10 dark:text-gray-200`), заголовок `font-black tracking-tight` с
+  `drop-shadow` для читаемости поверх фото. Под лого — `QrRow`
+  (инлайн-компонент в `page.tsx`, без дублирования): `flex-col sm:flex-row`, ссылка
+  обязана быть сплошной `bg-white` (`qrLinkCls`, тени не трогать), QR `size={180}`,
+  подписи `text-sm font-medium text-gray-600 dark:text-gray-200`. Кнопки: тёмное
+  стекло сабмита `darkBtn` (`bg-[#141a26]/90 rounded-full`, «Контакты» → `/about`) +
+  стеклянная «Войти» / «В интерфейс» (`useAuth().token` → `/login`/`/workspace`).
+  Ссылки — только `Link`, переходы deck — только `<button>` (у `Link` нет
+  `onClick`-перехода слайда).
+- Контакты — отдельная страница `/about` (`frontend/app/about/page.tsx`): та же
+  вуаль и карточка `max-w-xl`, сверху «← На главную», внутри `<PulseLogo as="span">`
+  + `h1` «Контакты», тот же QR-блок (`size={180}`, `bg-white`), стеклянные пилюли
+  `<a target="_blank" rel="noopener noreferrer">` на `GITHUB_URL`/`SITE_URL`,
+  плашка «Разработчики» («Состав команды добавим позже») и `darkBtn`
+  «Войти / Зарегистрироваться» → `/login`.
+- Запреты deck: палитра `#101C4C/#ECF3FB/#E74040/#31A275` запрещена (база gray,
+  акцент `blue-600`, плохо `border-red-200/70 bg-red-50/80 text-red-700`, хорошо —
+  паттерн live-бейджа из `workspace/page.tsx`); `LogoMark`/`GovIcon`/…/`PipelineDiagram`/
+  `homeForRole`/`roleOf`/`/inbox` не тащить — их нет в репо (`components/` — только
+  `PulseLogo`, `AppHeader`; `lib/auth.tsx` — только `useAuth()` с `role`); бренд
+  только через `<PulseLogo>`, текстом нельзя; каждой поверхности `dark:`-дубль;
+  кликабельному — общий интерактив Liquid Glass.
 
 ## Тёмная тема и доступность (обязательно)
 

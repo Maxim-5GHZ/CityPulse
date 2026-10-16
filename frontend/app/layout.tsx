@@ -5,6 +5,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'CityPulse',
   description: 'Хакатон-скелет: Next.js + Spring Boot + Postgres',
+  icons: {
+    icon: '/favicon.ico',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
