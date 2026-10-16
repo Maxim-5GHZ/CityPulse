@@ -224,6 +224,11 @@
   центр `55.0960,36.6100` (солнце + проекция). Кэш —
   `frontend/public/osm/obninsk-center.geojson` (коммитим, офлайн-демо).
   В углу карты и в «Как считаем» — `© OpenStreetMap`.
+- Кэши эко и города — тоже в `frontend/public/osm/` (коммитим):
+  `obninsk-water.geojson` (Протва/Репинка/пруды), `obninsk-roads.geojson`
+  (магистрали для FR-30), `obninsk-city.geojson` (весь город, LOD:
+  `tolerance 3м`, `minArea 60м²`, квота 45/км², ~2800 коробок). Профили —
+  `--fetch --profile water|roads|city` в `scripts/osm-to-district.mjs`.
 - Конвейер: Overpass QL `way/relation["building"](bbox); out geom;` →
   `scripts/osm-to-district.mjs` → GeoJSON → `lib/city/osm.ts` → `DistrictModel`.
   Прямого fetch к Overpass из браузера нет (правило `/backend/*`);
@@ -250,6 +255,17 @@
 - 2D — `ol@10` `VectorLayer`, подложка OSM приглушённая; канвас сплошной,
   стекло только в панелях. Тень 2D: `L=H/tan(alt)`, `dx=L*cos(az)`, `dy=L*sin(az)`.
   Ветер: поле 8×8, конус `L=2*H`, зелень `-30%`, подпись «эвристика, не OpenFOAM».
+- Охват «Центр / Весь город» (сегмент в шапке карты, работает и в 2D, и в 3D):
+  город грузится лениво через `withOsmCity()`, переводится в сетку центра
+  (`lib/city/extent.ts`, `DEFAULT_META` не трогаем, id — `city-…`) и рисуется
+  LOD-фоном: 2D — тот же `VectorLayer` (`kind 'citybuilding'`, некликабелен),
+  3D — один `InstancedMesh` (боксы по главной оси, без фасадов/рейкаста, тени
+  только на фрагменте). Расчёты (граф, M1/M2, ветер, эко) остаются на фрагменте;
+  свои коробки (`custom-*`) видны поверх фона в обоих охватах.
+- Эко-слои 2D (чекбоксы «Слои»): грунтовые воды FR-31 (`lib/city/water.ts`,
+  сетка 20×20, 3 класса, бейдж «условно, не изыскания») и загрязнение FR-30
+  (`lib/city/pollution.ts`, мок 24×24 + снос по ветру, бейдж «мок, не прогноз»).
+  Вода и дороги — реальный OSM, классы и шлейф — синтетика.
 - Коробка влияет на метрики: рвёт ребра в радиусе 20м
   (`closed` или `length+=периметр/2`) → Dijkstra заново; +ветрозатон +тень.
 - API/БД: сценарии — `V3__scenarios.sql` (`owner_id, name, graph JSONB`), CRUD

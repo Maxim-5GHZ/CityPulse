@@ -1,37 +1,21 @@
-// Кейс 03 — ветер-эвристика (§9.4 сисанализа, Q7): поле 8×8, конус затишья
-// L=2*H за зданием, зелень −30%. Это НЕ CFD/OpenFOAM — в UI честная подпись.
-// Всё в метрах сетки 0..1000. Направление — КУДА дует, градусы от севера.
+// frontend/lib/city/wind.ts
 import type { DistrictModel } from './model';
 
-export const WIND_GRID = 8;
+export const WIND_GRID = 12;
 
 export interface WindCell {
-  /** центр ячейки, м сетки */
   x: number;
   y: number;
-  /** единичный вектор КУДА дует */
   ux: number;
   uy: number;
-  /** м/с после застройки и зелени */
   speed: number;
-  /** комфорт 0..1: штиль — застой, сильный ветер — дискомфорт */
   comfort: number;
+  turb: number;
 }
 
 export interface WindField {
   cells: WindCell[];
-  /** средний комфорт по полю 0..1 */
   comfort: number;
-}
-
-function pointInPoly(x: number, y: number, poly: [number, number][]): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const [xi, yi] = poly[i];
-    const [xj, yj] = poly[j];
-    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
 }
 
 function centroid(poly: [number, number][]): [number, number] {
@@ -45,9 +29,10 @@ function centroid(poly: [number, number][]): [number, number] {
 }
 
 export function windField(model: DistrictModel, thetaDeg: number, v0: number): WindField {
-  const t = (thetaDeg * Math.PI) / 180;
-  const ux = Math.sin(t);
-  const uy = Math.cos(t);
+  const rad = (thetaDeg * Math.PI) / 180;
+  const globalUx = Math.sin(rad);
+  const globalUy = -Math.cos(rad);
+
   const blocks = model.buildings.map((b) => {
     let minX = Infinity;
     let minY = Infinity;
@@ -60,37 +45,75 @@ export function windField(model: DistrictModel, thetaDeg: number, v0: number): W
       if (y > maxY) maxY = y;
     }
     const [cx, cy] = centroid(b.footprint);
-    return { cx, cy, h: b.h, r: Math.hypot(maxX - minX, maxY - minY) / 2, poly: b.footprint };
+    return {
+      cx,
+      cy,
+      h: b.h,
+      r: Math.max(15, Math.hypot(maxX - minX, maxY - minY) / 2),
+    };
   });
 
   const step = 1000 / WIND_GRID;
   const cells: WindCell[] = [];
   let comfortSum = 0;
+
   for (let i = 0; i < WIND_GRID; i++) {
     for (let j = 0; j < WIND_GRID; j++) {
       const x = (i + 0.5) * step;
       const y = (j + 0.5) * step;
-      let f = 1;
+
+      let ux = globalUx;
+      let uy = globalUy;
+      let speedFactor = 1.0;
+      let maxTurb = 0.15;
+
       for (const b of blocks) {
-        if (pointInPoly(x, y, b.poly)) {
-          f = Math.min(f, 0.05); // внутри коробки — почти штиль
-          break;
+        const dx = x - b.cx;
+        const dy = y - b.cy;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < b.r * 2.8) {
+          const along = dx * globalUx + dy * globalUy;
+          const perp = Math.abs(dx * globalUy - dy * globalUx);
+
+          if (dist < b.r) {
+            const side = (dx * globalUy - dy * globalUx) >= 0 ? 1 : -1;
+            ux = -globalUy * side;
+            uy = globalUx * side;
+            speedFactor = Math.min(speedFactor, 0.45);
+            maxTurb = Math.max(maxTurb, 0.7);
+          } else if (along > 0 && perp < b.r * 1.4) {
+            const wakeK = 1 - along / (b.r * 2.8);
+            speedFactor = Math.min(speedFactor, Math.max(0.4, 1 - wakeK * 0.5));
+            maxTurb = Math.max(maxTurb, 0.5 + wakeK * 0.4);
+          } else if (perp < b.r * 1.5) {
+            speedFactor = Math.max(speedFactor, 1.25);
+          }
         }
-        const vx = x - b.cx;
-        const vy = y - b.cy;
-        const along = vx * ux + vy * uy; // >0 — ячейка по ветру за зданием
-        if (along <= 0 || along > 2 * b.h) continue;
-        const perp = Math.abs(vx * uy - vy * ux);
-        if (perp < b.r + 12) f = Math.min(f, 0.25); // конус затишья L=2H
       }
-      for (const g of model.greens) {
-        if (pointInPoly(x, y, g.polygon)) f *= 1 - 0.3 * g.porosity; // зелень −30%
-      }
-      const speed = Math.round(v0 * f * 10) / 10;
-      const comfort = speed < 0.5 ? 0.3 : Math.max(0, Math.round((1 - (speed - 0.5) / 9.5) * 1000) / 1000);
+
+      const len = Math.hypot(ux, uy) || 1;
+      ux /= len;
+      uy /= len;
+
+      const finalSpeed = Math.max(0.8, Math.round(v0 * speedFactor * 10) / 10);
+      const comfort = finalSpeed < 1.5 ? 0.4 : finalSpeed > 8 ? 0.3 : 0.85;
       comfortSum += comfort;
-      cells.push({ x, y, ux, uy, speed, comfort });
+
+      cells.push({
+        x,
+        y,
+        ux,
+        uy,
+        speed: finalSpeed,
+        comfort,
+        turb: Math.min(1, Math.round(maxTurb * 100) / 100),
+      });
     }
   }
-  return { cells, comfort: Math.round((comfortSum / cells.length) * 1000) / 1000 };
+
+  return {
+    cells,
+    comfort: Math.round((comfortSum / cells.length) * 100) / 100,
+  };
 }

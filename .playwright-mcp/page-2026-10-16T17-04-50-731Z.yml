@@ -1,0 +1,26 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e4]:
+    - link "← На главную" [ref=e6] [cursor=pointer]:
+      - /url: /
+    - generic [ref=e7]:
+      - img "CityPulse" [ref=e9]
+      - generic [ref=e12]:
+        - button "Вход" [ref=e13] [cursor=pointer]
+        - button "Регистрация" [ref=e14] [cursor=pointer]
+      - paragraph [ref=e15]: С возвращением!
+      - button "Войти через Флида ID" [ref=e16] [cursor=pointer]:
+        - img [aria-hidden] [ref=e17]: Ф
+      - generic [ref=e20]: или войдите по почте
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - generic [ref=e26]: Электронная почта
+          - textbox "Электронная почта" [ref=e27]:
+            - /placeholder: ivan@example.com
+        - generic [ref=e28]:
+          - generic [ref=e29]: Пароль
+          - generic [ref=e30]:
+            - textbox "Пароль" [ref=e31]:
+              - /placeholder: Введите пароль
+            - button "Показать пароль" [ref=e32] [cursor=pointer]
+        - button "Войти" [ref=e39] [cursor=pointer]
+  - alert [ref=e40]

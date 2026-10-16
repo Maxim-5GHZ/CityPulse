@@ -1,0 +1,124 @@
+- generic [ref=f1e1]:
+  - alert [ref=f1e4]
+  - generic [ref=f1e5]:
+    - banner [ref=f1e7]:
+      - generic [ref=f1e8]:
+        - link "CityPulse — рабочая область" [ref=f1e9] [cursor=pointer]:
+          - /url: /workspace
+          - img "CityPulse" [ref=f1e10]
+        - 'button "Аккаунт: viz2-1792170295@example.com" [ref=f1e14] [cursor=pointer]':
+          - generic [aria-hidden] [ref=f1e15]: V
+          - generic [ref=f1e16]: viz2-1792170295@example.com
+    - main [ref=f1e19]:
+      - region "Карта района" [ref=f1e20]:
+        - generic [ref=f1e21]:
+          - heading "Конструктор «Обнинск 2040»" [level=1] [ref=f1e22]
+          - generic [ref=f1e23]:
+            - tablist "Режим просмотра" [ref=f1e24]:
+              - tab "2D Потоки" [selected] [ref=f1e25] [cursor=pointer]
+              - tab "3D Инсоляция" [ref=f1e26] [cursor=pointer]
+            - group "Охват карты" [ref=f1e27]:
+              - button "Центр" [ref=f1e28] [cursor=pointer]
+              - button "Весь город" [active] [pressed] [ref=f1e29] [cursor=pointer]
+        - paragraph [ref=f1e30]: Весь Обнинск из OpenStreetMap (240 коробок LOD-фоном). Расчёты — по фрагменту центра. Данные условные, не прогноз (п.11).
+        - 'img "Схема района: здания, остановки, парк и поле ветра. Непрерывные стримлайны окрашены по скорости (лазурь — штиль, изумруд — слабый, янтарь — умеренный, коралл — сильный), мягкие пятна — зоны вихрей. При включённых эко-слоях поверх карты — ячейки грунтовых вод (условно) с линиями водоёмов и ячейки загрязнения воздуха (мок). В охвате «Весь город» детальные коробки заменены упрощённым LOD-фоном. Маркер остановки можно тянуть, клик по зданию выбирает его." [ref=f1e134]':
+          - generic [ref=f1e136]:
+            - generic:
+              - generic [ref=f1e140]:
+                - button "+" [ref=f1e141] [cursor=pointer]
+                - button "–" [ref=f1e142] [cursor=pointer]
+              - list [ref=f1e144]:
+                - listitem [ref=f1e145]:
+                  - text: ©
+                  - link "OpenStreetMap" [ref=f1e146] [cursor=pointer]:
+                    - /url: https://www.openstreetmap.org/copyright
+                  - text: contributors.
+        - generic "Легенда ветра" [ref=f1e45]:
+          - generic [ref=f1e46]: "Ветер:"
+          - generic [ref=f1e47]: штиль
+          - generic [ref=f1e49]: слабый
+          - generic [ref=f1e51]: умеренный
+          - generic [ref=f1e53]: сильный
+          - generic [ref=f1e55]: зона вихрей
+          - generic [ref=f1e57]: "труба: внутрь коробок нельзя — эвристика"
+        - paragraph [ref=f1e58]: Клик по зданию — выбрать (свою можно удалить) · маркер О/П/Ш можно тянуть · © OpenStreetMap
+      - complementary "Настройки и состояние" [ref=f1e59]:
+        - region "Настройки" [ref=f1e60]:
+          - heading "Настройки" [level=2] [ref=f1e61]
+          - generic [ref=f1e62]:
+            - button "+ Коробка" [ref=f1e63] [cursor=pointer]
+            - button "Сбросить" [ref=f1e64] [cursor=pointer]
+          - group "Слои" [ref=f1e65]:
+            - generic [ref=f1e67]:
+              - generic [ref=f1e68] [cursor=pointer]:
+                - checkbox "Ветер — цветные частицы (эвристика, не OpenFOAM)" [checked] [ref=f1e69]
+                - text: Ветер — цветные частицы (эвристика, не OpenFOAM)
+              - generic [ref=f1e70] [cursor=pointer]:
+                - checkbox "Зоны турбулентности (где вихрей много)" [checked] [ref=f1e71]
+                - text: Зоны турбулентности (где вихрей много)
+              - generic [ref=f1e72] [cursor=pointer]:
+                - checkbox "Тени зданий" [checked] [ref=f1e73]
+                - text: Тени зданий
+              - generic [ref=f1e74] [cursor=pointer]:
+                - checkbox "Грунтовые воды — условно, не изыскания" [ref=f1e75]
+                - text: Грунтовые воды — условно, не изыскания
+              - generic [ref=f1e76] [cursor=pointer]:
+                - checkbox "Загрязнение воздуха (мок + снос ветром)" [ref=f1e77]
+                - text: Загрязнение воздуха (мок + снос ветром)
+              - generic [ref=f1e78] [cursor=pointer]:
+                - checkbox "Дома OSM (выкл — чистое поле)" [checked] [ref=f1e79]
+                - text: Дома OSM (выкл — чистое поле)
+          - generic [ref=f1e80]:
+            - text: "Ветер: 90° · 4 м/с"
+            - generic [ref=f1e81]:
+              - slider "Направление ветра в градусах" [ref=f1e82]: "90"
+              - slider "Скорость ветра в метрах в секунду" [ref=f1e83]: "4"
+          - group "Пресет здания" [ref=f1e84]:
+            - button "Панелька, 5 эт." [pressed] [ref=f1e85] [cursor=pointer]
+            - button "Башня, 16 эт." [ref=f1e86] [cursor=pointer]
+            - button "Школа" [ref=f1e87] [cursor=pointer]
+            - button "Торговый центр" [ref=f1e88] [cursor=pointer]
+            - button "Своя коробка" [ref=f1e89] [cursor=pointer]
+          - generic [ref=f1e90]:
+            - text: "Время: 13:00 (тень)"
+            - slider "Время суток для тени" [ref=f1e91]: "13"
+          - generic [ref=f1e92]:
+            - text: "Радиус парка N: 400 м"
+            - slider "Радиус парка N в метрах" [ref=f1e93]: "400"
+        - region "Состояние" [ref=f1e94]:
+          - generic [ref=f1e95]:
+            - heading "Состояние района" [level=2] [ref=f1e96]
+            - generic [ref=f1e97]: Live Аналитика
+          - generic [ref=f1e98]:
+            - generic [ref=f1e99]:
+              - generic [ref=f1e100]:
+                - generic [ref=f1e101]: M1 · До остановки
+                - generic [ref=f1e102]: Превышение
+              - generic [ref=f1e103]:
+                - generic [ref=f1e104]: 518.7 м
+                - generic [ref=f1e105]: без изменений
+            - generic [ref=f1e106]:
+              - generic [ref=f1e107]:
+                - generic [ref=f1e108]: Ветер · Комфорт двора
+                - generic [ref=f1e109]: Оптимально
+              - generic [ref=f1e110]:
+                - generic [ref=f1e111]: "0.67"
+                - generic [ref=f1e112]: индекс 0..1 (эвристика)
+            - generic [ref=f1e115]:
+              - generic [ref=f1e116]:
+                - generic [ref=f1e117]: M2 · Парк в 400 м
+                - generic [ref=f1e118]: 0 п.п.
+              - generic [ref=f1e119]:
+                - generic [ref=f1e120]: 34%
+                - generic [ref=f1e121]: жителей охвачено
+          - paragraph [ref=f1e124]: Кликни по зданию — покажем затенение соседей
+          - group [ref=f1e125]:
+            - generic "Как производятся расчёты" [ref=f1e126] [cursor=pointer]
+        - region "Проекты" [ref=f1e127]:
+          - heading "Проекты" [level=2] [ref=f1e128]
+          - generic [ref=f1e130]:
+            - generic [ref=f1e131]:
+              - textbox "Название проекта" [ref=f1e132]:
+                - /placeholder: Название, например Вариант А
+              - button "Сохранить" [disabled]
+            - paragraph [ref=f1e133]: Проектов пока нет — сохраните текущий вариант.

@@ -1,3 +1,50 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Мягкая архитектурная тонировка подложки карты */
+.ol-clean-basemap canvas {
+  filter: grayscale(85%) contrast(108%) brightness(96%);
+}
+@media (prefers-color-scheme: dark) {
+  .ol-clean-basemap canvas {
+    filter: invert(90%) hue-rotate(180deg) contrast(115%) brightness(85%);
+  }
+}
+
+/* Аккуратные ползунки слайдеров вместо топорных системных */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(148, 163, 184, 0.35);
+  height: 6px;
+  border-radius: 9999px;
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #2563eb;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+input[type='range']::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: #2563eb;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s ease;
+}
+input[type='range']::-moz-range-thumb:hover {
+  transform: scale(1.2);
+}
