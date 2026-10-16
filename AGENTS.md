@@ -213,8 +213,10 @@
 
 ## Кейс 03 — Конструктор «Обнинск 2040» (жёсткие ограничения, зафиксированы)
 
-- Роут — `/workspace/constructor` внутри workspace, пункт в `NAV_ITEMS`
-  (`AppHeader.tsx`); страница `'use client'` + `dynamic(ssr:false)` для карт.
+- Роут — `/workspace` (воркспейс и есть конструктор; `/workspace/constructor` —
+  тот же экран для совместимости). Отдельного пункта в `NAV_ITEMS` нет —
+  логотип хедера уже ведёт в `/workspace`. Страница `'use client'` +
+  `dynamic(ssr:false)` для карт.
 - Реальная геометрия — только OpenStreetMap (ODbL, без ключей).
   Запрещены: спутник/Sentinel-5P/OpenAQ в 3D, Cesium ion, Google Maps/Tiles 3D,
   GLTF/внешние меши, PostGIS, честный CFD/OpenFOAM, LLM в демо.

@@ -12,7 +12,7 @@ import { HEADER_LOGO_LINK_CLS, HEADER_PILL_CLS } from '@/components/headerStyle'
  * на мобиле те же ссылки уезжают в шторку снизу.
  * Новую кнопку добавлять сюда — она появится в обоих местах сама.
  */
-const NAV_ITEMS: { href: string; label: string }[] = [{ href: '/workspace/constructor', label: 'Конструктор' }];
+const NAV_ITEMS: { href: string; label: string }[] = [];
 
 /** Пункт шторки/меню: общий интерактив — как всё кликабельное. */
 const MENU_ITEM_CLS =
