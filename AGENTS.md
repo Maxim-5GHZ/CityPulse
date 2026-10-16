@@ -210,3 +210,54 @@
 - rAF-циклы и подписки всегда чистятся при размонтировании.
 - PulseLogo — суперсемплинг ×2: бэкстор `min(devicePixelRatio * 2, 6)` при той же
   CSS-геометрии, иначе текст мылит.
+
+## Кейс 03 — Конструктор «Обнинск 2040» (жёсткие ограничения, зафиксированы)
+
+- Роут — `/workspace/constructor` внутри workspace, пункт в `NAV_ITEMS`
+  (`AppHeader.tsx`); страница `'use client'` + `dynamic(ssr:false)` для карт.
+- Реальная геометрия — только OpenStreetMap (ODbL, без ключей).
+  Запрещены: спутник/Sentinel-5P/OpenAQ в 3D, Cesium ion, Google Maps/Tiles 3D,
+  GLTF/внешние меши, PostGIS, честный CFD/OpenFOAM, LLM в демо.
+- Фрагмент «Центр»: bbox `55.0895,36.5980,55.0995,36.6180`,
+  центр `55.0960,36.6100` (солнце + проекция). Кэш —
+  `frontend/public/osm/obninsk-center.geojson` (коммитим, офлайн-демо).
+  В углу карты и в «Как считаем» — `© OpenStreetMap`.
+- Конвейер: Overpass QL `way/relation["building"](bbox); out geom;` →
+  `scripts/osm-to-district.mjs` → GeoJSON → `lib/city/osm.ts` → `DistrictModel`.
+  Прямого fetch к Overpass из браузера нет (правило `/backend/*`);
+  live-импорт — только фазой B через `POST /api/osm/import` (бэк тянет server-server).
+- Проекция: equirect вокруг центра
+  `x=(lon-lon0)*111320*cos(lat0)`, `y=(lat-lat0)*110540`, сдвиг в `0..1000`.
+  Упрощение `tolerance 1м`, дроп `<20 м²`, лимит `~300` коробок (2км/600 — нельзя без LOD).
+- Высота: `height` → парс, иначе `levels*3.0`, иначе дефолт
+  (`residential 15 / school 12 / retail 10 / garage 4 / church 18`).
+  Крыша: `roof:shape flat|gable|hip`, иначе `flat` при `h>15`, `gable` при малом.
+  Пресет: `levels<=5 panel5`, `>9 tower16`, `amenity=school shkola`,
+  `shop=mall tc`, иначе `custom`.
+- Граф P0 — синтетический поверх реальных коробок (12 узлов, 5 домов 80–240 жит.,
+  остановка+парк+школа опц.): гарантирует M1/M2, до/после, `seed+hash`.
+  Дороги `highway=footway|path` из OSM — только фоном в фазе 1, в Dijkstra не тащим.
+  Dijkstra — свой `lib/city/graph.ts` (~30 строк), вес = длина, `closed` исключается.
+- 3D — только процедурная геометрия (`three@0.16x`):
+  `Box`/`Extrude(footprint,h)` + фасад `CanvasTexture 128x256` (сетка окон по `floors`)
+  + крыши `flat` плита / `gable` призма / `hip` пирамида, `MeshStandardMaterial`.
+  Палитра 3D — только slate + приглушённый стально-голубой, неон запрещён.
+  Свет `DirectionalLight` из `suncalc(date,55.096,36.61)`, `shadowMap PCFSoft 1024`,
+  `pixelRatio<=2`, земля `Plane receiveShadow`, здания `cast+receive`.
+  Выбор — `Raycaster`, `% затенения` через `turf.intersect`.
+- 2D — `ol@10` `VectorLayer`, подложка OSM приглушённая; канвас сплошной,
+  стекло только в панелях. Тень 2D: `L=H/tan(alt)`, `dx=L*cos(az)`, `dy=L*sin(az)`.
+  Ветер: поле 8×8, конус `L=2*H`, зелень `-30%`, подпись «эвристика, не OpenFOAM».
+- Коробка влияет на метрики: рвёт ребра в радиусе 20м
+  (`closed` или `length+=периметр/2`) → Dijkstra заново; +ветрозатон +тень.
+- API/БД: сценарии — `V3__scenarios.sql` (`owner_id, name, graph JSONB`), CRUD
+  `/api/scenarios`, дубли `/metrics/calculate /wind /shadow /conclusion` за JWT.
+  Ошибки `{message, fieldErrors?}` по-русски, клиент — `lib/api.ts`.
+- UI конструктора: русский, бренд только `<PulseLogo>`, панели-стекло
+  `rounded-[32px] bg-white/40 dark:bg-gray-900/40`, пилюли `rounded-full`,
+  каждой поверхности `dark:`-дубль, интерактив
+  `hover:scale-[1.05] active:scale-[0.98] motion-reduce`, канвасу
+  `role="img"+aria-label`, `OrbitControls`+`ResizeObserver`+rAF чистятся.
+- Дисклеймеры в UI: «данные условные, не прогноз (п.11)», «не точный двойник (п.7)»,
+  «ветер — эвристика». Срез при отставании: воды → спутник → ветер → тени → 3D,
+  P0 неприкосновенен. Проверки `tsc --noEmit` + `next lint` — чистые.
