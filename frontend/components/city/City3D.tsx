@@ -6,7 +6,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { DistrictModel } from '@/lib/city/model';
-import { createBuildingMesh, disposeBuilding } from '@/lib/city/three-factory';
+import { createBuildingMesh, disposeBuilding, buildContextGroup, disposeContextGroup } from '@/lib/city/three-factory';
 import { sunLightPos, type SunPos } from '@/lib/city/shadow';
 
 interface Props {
@@ -19,7 +19,7 @@ interface Props {
 
 export default function City3D({ model, sun, selectedId, onSelect, className }: Props) {
   const divRef = useRef<HTMLDivElement | null>(null);
-  const sceneRef = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; light: THREE.DirectionalLight; groups: Map<string, THREE.Group> } | null>(null);
+  const sceneRef = useRef<{ renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; light: THREE.DirectionalLight; groups: Map<string, THREE.Group>; context: THREE.Group | null } | null>(null);
   const cbRef = useRef({ onSelect });
   cbRef.current = { onSelect };
 
@@ -32,19 +32,30 @@ export default function City3D({ model, sun, selectedId, onSelect, className }: 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(dark ? '#0f172a' : '#e2e8f0');
-    scene.fog = new THREE.Fog(dark ? '#0f172a' : '#e2e8f0', 1800, 3200);
-    const camera = new THREE.PerspectiveCamera(50, 1, 1, 6000);
-    camera.position.set(650, 620, 950);
+    // Фон темнее прежнего #e2e8f0 — плита земли #a3b3c6 от него отделяется.
+    scene.background = new THREE.Color(dark ? '#0f172a' : '#d3dde9');
+    scene.fog = new THREE.Fog(dark ? '#0f172a' : '#d3dde9', 1600, 3400);
+    const camera = new THREE.PerspectiveCamera(42, 1, 1, 6000);
+    camera.position.set(540, 500, 740);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, 0, 0);
-    controls.maxPolarAngle = Math.PI / 2.05;
+    controls.target.set(0, 0, 30);
+    controls.maxPolarAngle = Math.PI / 2.35;
+    controls.minDistance = 300;
+    controls.maxDistance = 2200;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
     controls.update();
 
-    const hemi = new THREE.HemisphereLight(0xffffff, dark ? '#1e293b' : '#94a3b8', 0.9);
+    const hemi = new THREE.HemisphereLight(0xffffff, dark ? '#1e293b' : '#94a3b8', 1.15);
     scene.add(hemi);
-    const light = new THREE.DirectionalLight(0xffffff, 2.2);
+    // Заполняющий свет без теней: при низком солнце (8:00) фасады иначе уходят в черноту.
+    const fill = new THREE.DirectionalLight(0xdbe7f3, 0.5);
+    fill.position.set(-600, 400, -400);
+    scene.add(fill);
+    const light = new THREE.DirectionalLight(0xffffff, 2.0);
     light.castShadow = true;
     light.shadow.mapSize.set(1024, 1024);
     light.shadow.camera.left = -800;
@@ -52,12 +63,14 @@ export default function City3D({ model, sun, selectedId, onSelect, className }: 
     light.shadow.camera.top = 800;
     light.shadow.camera.bottom = -800;
     light.shadow.camera.far = 5000;
+    light.shadow.bias = -0.0004;
+    light.shadow.normalBias = 1.5;
     scene.add(light);
     scene.add(light.target);
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(1100, 1100),
-      new THREE.MeshStandardMaterial({ color: dark ? '#1e293b' : '#cbd5e1', roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: dark ? '#1e293b' : '#a3b3c6', roughness: 1 }),
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -108,7 +121,7 @@ export default function City3D({ model, sun, selectedId, onSelect, className }: 
     };
     renderer.domElement.addEventListener('click', onClick);
 
-    sceneRef.current = { renderer, scene, camera, light, groups: new Map() };
+    sceneRef.current = { renderer, scene, camera, light, groups: new Map(), context: null };
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
@@ -129,10 +142,18 @@ export default function City3D({ model, sun, selectedId, onSelect, className }: 
     };
   }, []);
 
-  // Здания при смене модели.
+  // Здания и контекст (улицы, зелень) при смене модели.
   useEffect(() => {
     const s = sceneRef.current;
     if (!s) return;
+    if (s.context) {
+      s.scene.remove(s.context);
+      disposeContextGroup(s.context);
+      s.context = null;
+    }
+    const ctx = buildContextGroup(model);
+    s.context = ctx;
+    s.scene.add(ctx);
     const seen = new Set<string>();
     for (const b of model.buildings) {
       seen.add(b.id);
@@ -160,7 +181,9 @@ export default function City3D({ model, sun, selectedId, onSelect, className }: 
     const s = sceneRef.current;
     if (!s) return;
     const [x, y, z] = sunLightPos(sun);
-    s.light.position.set(x, Math.max(50, y), z);
+    // 2D-тени считаются честным вектором suncalc, а 3D-светильник приподнимаем
+    // минимум до 140 м: в 8:00 солнце почти горизонтальное и без подъёма сцена чёрная.
+    s.light.position.set(x, Math.max(140, y), z);
     s.groups.forEach((g, id) => {
       const sel = id === selectedId;
       g.traverse((o: THREE.Object3D) => {
