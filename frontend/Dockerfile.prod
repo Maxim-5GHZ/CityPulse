@@ -10,8 +10,11 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 # rewrites (/backend/*) запекаются в next build, поэтому BACKEND_URL нужен на сборке.
+# NEXT_PUBLIC_* тоже запекаются: client_id Флиды публичный по дизайну (public-клиент, секрета нет).
 ARG BACKEND_URL=http://backend:8080
 ENV BACKEND_URL=$BACKEND_URL
+ARG NEXT_PUBLIC_FLIDA_CLIENT_ID=
+ENV NEXT_PUBLIC_FLIDA_CLIENT_ID=$NEXT_PUBLIC_FLIDA_CLIENT_ID
 RUN npm run build
 
 FROM node:20-alpine AS runner

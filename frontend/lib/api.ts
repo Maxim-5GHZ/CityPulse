@@ -77,3 +77,12 @@ export function register(email: string, password: string): Promise<{ token: stri
     body: { email, password },
   });
 }
+
+// Вход через Флида ID (Web SDK): фронт уже добыл Flida access_token,
+// бэкенд перепроверит его через userinfo и вернёт НАШ JWT.
+export function exchangeFlida(flidaAccessToken: string): Promise<{ token: string }> {
+  return req<{ token: string }>('/auth/flida', null, {
+    method: 'POST',
+    body: { access_token: flidaAccessToken },
+  });
+}

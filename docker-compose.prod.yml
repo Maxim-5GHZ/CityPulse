@@ -7,10 +7,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # Prod: Флида ходит через боевой origin, dev-значения из base перекрываем.
-    environment:
-      FLIDA_REDIRECT_URI: ${FLIDA_PROD_REDIRECT_URI:-https://hotcodeband.ru/flida/oauth2/callback}
-      FLIDA_FRONTEND_URL: ${FLIDA_PROD_FRONTEND_URL:-https://hotcodeband.ru}
     # !reset — именно сброс, а не склейка: пустой [] в override БЕЗ тега
     # base-volumes не убирает, и bind ./backend:/app прятал бы собранный jar.
     volumes: !reset []
@@ -22,6 +18,7 @@ services:
       dockerfile: Dockerfile.prod
       args:
         BACKEND_URL: http://backend:8080
+        NEXT_PUBLIC_FLIDA_CLIENT_ID: ${NEXT_PUBLIC_FLIDA_CLIENT_ID:-}
     volumes: !reset []
     restart: unless-stopped
 

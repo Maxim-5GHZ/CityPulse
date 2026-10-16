@@ -1,28 +1,27 @@
 'use client';
 
 /*
-  ═══════════════════════════════════════════════════════════════════
-  ФРОНТЕНДЕР, НЕ ПЕРЕЖИВАЙ ПРО ЭТУ СТРАНИЦУ.
-
-  Это приёмник возврата от Флида ID. Вся «авторизация» тут — 10 строк:
-  бэкенд после обмена кода с Флидой редиректит браузер сюда
-  с НАШИМ JWT во фрагменте: /flida/finish#token=eyJ...
-
-  Почему во фрагменте (#), а не в query (?): фрагмент никогда не уходит
-  в сеть и не пишется в логи — токен видят только этот JS и localStorage.
-
-  Что делает страница: достаёт токен из location.hash, кладёт его в общий
-  AuthContext (тот же, что email-вход) и уводит на главную. Всё.
-  Ни fetch, ни SDK, ни секретов. Не чинить — работает.
-
-  Обратный путь: прямой заход без токена или битый hash → обратно на /login.
-  ═══════════════════════════════════════════════════════════════════
+  Возврат от Флида ID в схеме Web SDK (redirect, public-клиент без секрета).
+  Сюда смотрит redirectUri: Флида отдаёт ?code&state, SDK сам проверяет
+  транзакцию из sessionStorage и меняет код на Flida-токены. Дальше фронт
+  меняет Flida access_token на НАШ JWT через POST /backend/auth/flida
+  (бэкенд перепроверяет токен через userinfo сервер-сервер) и кладёт
+  его в общий AuthContext — дальше всё как после email-входа.
+  Параметры callback из URL чистим через history.replaceState.
 */
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { exchangeFlida, ApiError } from '@/lib/api';
+import { getFlidaSdk, flidaErrorMessage, isAbortError } from '@/lib/flida';
 import PulseLogo from '@/components/PulseLogo';
+
+const cardCls =
+  'w-full max-w-md rounded-[32px] border border-white/60 bg-white/40 px-6 py-6 backdrop-blur-xl ' +
+  'backdrop-saturate-150 md:px-8 ' +
+  'shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_24px_60px_-16px_rgba(20,26,38,0.35)] ' +
+  'dark:border-white/20 dark:bg-gray-900/40';
 
 export default function FlidaFinishPage() {
   const { ready, token, applyToken } = useAuth();
@@ -30,35 +29,60 @@ export default function FlidaFinishPage() {
   const [complaint, setComplaint] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!ready) return;
-    if (token) {
-      router.replace('/workspace');
+    if (!ready || token) {
+      if (token) router.replace('/workspace');
       return;
     }
-    const hash = window.location.hash;
-    const found = hash.startsWith('#token=') ? hash.slice('#token='.length) : '';
-    if (!found) {
-      setComplaint('Нет токена — вернись на страницу входа и попробуй ещё раз.');
-      return;
-    }
-    applyToken(found);
-    window.location.hash = '';
-    router.replace('/workspace');
+    let cancelled = false;
+    (async () => {
+      try {
+        const sdk = await getFlidaSdk();
+        const tokens = await sdk.autoAuthorization;
+        if (cancelled) return;
+        if (!tokens?.access_token) {
+          // Прямой заход без OAuth-ответа — нечего обрабатывать.
+          setComplaint('Нет данных входа — вернись на страницу входа и попробуй ещё раз.');
+          return;
+        }
+        const r = await exchangeFlida(tokens.access_token);
+        if (cancelled) return;
+        applyToken(r.token);
+        window.history.replaceState(null, '', window.location.pathname);
+        router.replace('/workspace');
+      } catch (err) {
+        if (cancelled || isAbortError(err)) return;
+        const msg = err instanceof ApiError ? err.message : flidaErrorMessage(err);
+        setComplaint(msg);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [ready, token, applyToken, router]);
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl border bg-white p-6 text-center shadow-sm">
-        <PulseLogo as="h1" size="sm" />
-        <p className="mt-3 text-sm text-gray-500">
-          {complaint ?? 'Завершаем вход через Флида ID…'}
-        </p>
-        {complaint && (
-          <a href="/login" className="mt-4 inline-block text-sm text-blue-600 hover:underline">
-            ← На страницу входа
-          </a>
-        )}
-      </div>
-    </main>
+    <section
+      className="relative min-h-screen bg-cover bg-center"
+      style={{ backgroundImage: "url('/city.png')" }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40 dark:from-black/60 dark:via-black/40 dark:to-black/70" />
+      <main className="container relative mx-auto flex min-h-screen flex-col items-center justify-center px-6 py-6">
+        <div className={cardCls}>
+          <div className="mx-auto flex justify-center">
+            <PulseLogo as="h1" size="lg" className="scale-150 my-2" />
+          </div>
+          <p className="mt-4 text-center text-sm text-gray-600 dark:text-gray-200">
+            {complaint ?? 'Завершаем вход через Флида ID…'}
+          </p>
+          {complaint && (
+            <div className="mt-4 text-center">
+              <a href="/login" className="text-sm text-blue-600 hover:underline">
+                ← На страницу входа
+              </a>
+            </div>
+          )}
+        </div>
+      </main>
+    </section>
   );
 }

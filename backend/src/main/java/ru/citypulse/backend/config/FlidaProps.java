@@ -5,16 +5,14 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
-/** Настройки Флида ID: прилетают из env контейнера, значения — в application.yml. */
+/**
+ * Флида ID в схеме Web SDK (public-клиент): PKCE/state/обмен кода живут во фронте,
+ * секрета нет вообще. Бэкенд только проверяет Flida access_token через userinfo
+ * сервер-сервер и минтит наш JWT.
+ */
 @Configuration
 @ConfigurationProperties(prefix = "app.flida")
 @Getter @Setter
 public class FlidaProps {
-  private String clientId = "";
-  private String clientSecret = "";
-  private String authorizeUri = "https://id.flida.ru/api/oidc/authorize";
-  private String tokenUri = "https://id.flida.ru/api/oidc/token";
   private String userinfoUri = "https://id.flida.ru/api/oidc/userinfo";
-  private String redirectUri = "http://localhost:3000/flida/oauth2/callback";
-  private String frontendUrl = "http://localhost:3000";
 }

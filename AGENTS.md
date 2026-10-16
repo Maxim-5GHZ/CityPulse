@@ -46,19 +46,47 @@
 - `content` в `frontend/tailwind.config.js` покрывает `app/`, `lib/`, `components/`.
   Новую папку с классами — дописать туда, иначе утилиты не сгенерируются
   (уже ловили невидимый `sr-only` и дубль логотипа).
-- Кнопка входа через Флида ID — обычная ссылка на `/backend/auth/flida/login`,
-  никакой JS-логики и секретов на фронте. Глагол зависит от режима:
+- Кнопка входа через Флида ID — `<button>` со стилем `flidaBtn`, запускает
+  Web SDK (`frontend/lib/flida.ts`, public-клиент без секрета, `fedcm: []`,
+  `mode: 'redirect'`) прямо из клика; callback принимает `/flida/finish` через
+  `autoAuthorization` и меняет Flida `access_token` на наш JWT через
+  `POST /backend/auth/flida`. Глагол зависит от режима:
   «Войти…» / «Зарегистрироваться…».
-- Ошибка Флиды (`?flida=error` → `flidaErrorBox`) живёт максимум 3 секунды:
+- Ошибка Флиды (`flidaError` → `flidaErrorBox`, текст из `flidaErrorMessage()` по
+  коду `FlidaError`) живёт максимум 3 секунды:
   гаснет по `setTimeout(3000)` и чистит URL через `history.replaceState`,
   чтобы не возвращаться при обновлении.
+- Хедер приватных экранов — `frontend/components/AppHeader.tsx` (сейчас только
+  `/workspace`): `sticky top-3 z-40`, плавающая стеклянная пилюля `rounded-full`
+  на всю ширину экрана — то же мутное стекло, что у карточек:
+  `border-white/60 bg-white/40 backdrop-blur-xl backdrop-saturate-150`
+  (`dark:border-white/20 dark:bg-gray-900/40`) + объёмные inset-тени карточки.
+  Слева `Link` с `<PulseLogo as="span" size="lg">`, справа кнопка
+  аккаунта (аватар-инициал + email + шеврон) с меню `role="menu"` (тоже стекло:
+  `rounded-2xl bg-white/70 backdrop-blur-xl`, `dark:bg-gray-900/70`):
+  шапка-подпись «Аккаунт» + email + «Выйти». Открытое меню кладёт под себя
+  диммированную шторку на весь экран (`fixed inset-0 z-30`,
+  `bg-[#141a26]/30 backdrop-blur-[2px]`, `dark:bg-black/50`, клик закрывает меню).
+  На мобиле меню — шторка справа во всю высоту (`fixed inset-y-0 right-0`,
+  `md:hidden`, `role="dialog"`, скругление `rounded-l-[32px]`, крестик,
+  выезд `motion-safe:animate-sheet-right`, скролл страницы лочится); на десктопе —
+  дропдаун у кнопки (`hidden md:block`). Кейфреймы `sheet-up`/`sheet-right`/`fade-in` — в
+  `tailwind.config.js`. Закрытие по клику вне и `Escape`
+  (слушатели чистятся), фокус возвращается на кнопку. В пунктах меню scale нет —
+  только `hover:bg` (иначе дёргается список).
+- Навигация хедера — константа `NAV_ITEMS` в `AppHeader.tsx`: на десктопе ссылки
+  идут в ряд по центру пилюли (`hidden md:flex`, стеклянные пилюли как «Войти»
+  на `/`), на мобиле те же ссылки уезжают в шторку снизу.
+  Новую кнопку добавлять в `NAV_ITEMS` — она появится в обоих местах сама.
 
-## Liquid Glass — экраны с фото-фоном (`/` и `/login`)
+## Liquid Glass — экраны с фото-фоном (`/`, `/login`, `/workspace`)
 
-- Действует на `/` и `/login`: поверх базовых правил. Остальной UI — по разделу выше.
-- Фон общий: `section.relative.min-h-screen.bg-cover.bg-center` со
+- Действует на `/`, `/login` и `/workspace` (каркас: приветствие + сетка скелетонов,
+  без контента): поверх базовых правил. Остальной UI — по разделу выше.
+- Фон общий: `relative.min-h-screen.bg-cover.bg-center` со
   `style={{ backgroundImage: "url('/city.png')" }}` (`/city.png` лежит в `frontend/public/`,
-  Next раздаёт только оттуда). Поверх — вуаль для читаемости стекла:
+  Next раздаёт только оттуда). На `/workspace` фон натянут на всю страницу,
+  включая хедер, чтобы над стеклянной пилюлей не оставалось серой полосы body. Поверх — вуаль для читаемости стекла:
   `absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40`
   (`dark:from-black/60 dark:via-black/40 dark:to-black/70`).
 - Карточка общая — стекло (`cardCls` в обоих файлах):
@@ -66,10 +94,11 @@
   `backdrop-blur-xl backdrop-saturate-150`, `border-white/60`,
   объём: `inset 1px 1px 2px rgba(255,255,255,0.8)` +
   `inset -1px -1px 2px rgba(0,0,0,0.05)` + мягкая внешняя тень.
-  Ширина разная: `/login` — `max-w-md`, `/` — `max-w-xl` (шире под два QR в ряд).
+  Ширина разная: `/login` — `max-w-md`, `/` — `max-w-xl` (шире под два QR в ряд),
+  `/workspace` — `max-w-4xl` (каркас под сетку виджетов `sm:grid-cols-2 lg:grid-cols-3`).
 - Шапка-ссылка («Войти» на `/`, «← На главную» на `/login`) — стеклянная пилюля:
   `rounded-full border-white/60 bg-white/40 px-4 py-1.5 backdrop-blur-xl hover:bg-white/60`
-  (`dark:border-white/20 dark:bg-white/10`).
+  (`dark:border-white/20 dark:bg-white/10`). На `/` кроме неё в шапке ничего нет.
 - Логотип: `<PulseLogo as="h1" size="lg" className="scale-150 my-2">` в обёртке
   `mx-auto flex justify-center`.
 - Специфика `/login`: табы — сегментированный контрол (`rounded-full bg-white/40 p-1`,
@@ -84,6 +113,11 @@
   `bg-white` (иначе не сканируется): `rounded-2xl border-white/60 p-4` + линза-тени;
   подписи — `text-sm font-medium text-gray-600` (`dark:text-gray-200`). QR — `size={180}`
   через `react-qr-code`, URL — константы `SITE_URL`/`GITHUB_URL` вверху `page.tsx`.
+- Интерактив общий: всё кликабельное — `transition-all duration-200 ease-out
+  hover:scale-[1.05] active:scale-[0.98]` (+ `transform-gpu` на стекле,
+  `motion-reduce:transform-none motion-reduce:transition-none`); глазик —
+  `hover:scale-110`; инпуты — деликатнее `hover:scale-[1.02] focus:scale-[1.02]`
+  (во всю ширину, иначе упрутся в края); `bg-white` у QR и тени при этом не трогать.
 
 ## Тёмная тема и доступность (обязательно)
 

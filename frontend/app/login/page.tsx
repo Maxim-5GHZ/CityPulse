@@ -5,14 +5,16 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
+import { getFlidaSdk, flidaErrorMessage, isAbortError } from '@/lib/flida';
 import PulseLogo from '@/components/PulseLogo';
 
 // Liquid Glass: пилюля-инпут с эффектом линзы.
 const INPUT_CLS =
-  'block w-full rounded-full border border-white/60 bg-white/60 px-5 py-2 text-gray-800 ' +
+  'block w-full transform-gpu rounded-full border border-white/60 bg-white/60 px-5 py-2 text-gray-800 ' +
   'shadow-[inset_0_2px_4px_rgba(0,0,0,0.06),inset_0_-1px_2px_rgba(255,255,255,0.9)] ' +
-  'backdrop-blur-xl outline-none transition placeholder:text-gray-400 ' +
-  'focus:border-blue-400 focus:ring-2 focus:ring-blue-300/60 ' +
+  'backdrop-blur-xl outline-none transition-all duration-200 ease-out placeholder:text-gray-400 ' +
+  'hover:scale-[1.02] focus:scale-[1.02] focus:border-blue-400 focus:ring-2 focus:ring-blue-300/60 ' +
+  'motion-reduce:transform-none motion-reduce:transition-none ' +
   'dark:border-white/20 dark:bg-white/10 dark:text-gray-100 dark:placeholder:text-gray-500';
 
 const LABEL_CLS = 'block mb-1.5 ml-2 text-sm font-medium text-gray-600 dark:text-gray-200';
@@ -32,18 +34,22 @@ export default function LoginPage() {
   const [showSignupPw, setShowSignupPw] = useState(false);
   const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Флида ID отклонил вход (бэк вернул 302 на /login?flida=error) — показываем плашку.
-  const [flidaError, setFlidaError] = useState(false);
+  // Ошибка входа через Флида ID — висит максимум 3 секунды, затем гаснет и чистит URL.
+  const [flidaError, setFlidaError] = useState<string | null>(null);
+  const [flidaBusy, setFlidaBusy] = useState(false);
+  const showFlidaError = (hint: string) => {
+    setFlidaError(hint);
+    setTimeout(() => {
+      setFlidaError(null);
+      window.history.replaceState(null, '', window.location.pathname);
+    }, 3000);
+  };
   useEffect(() => {
     if (window.location.search.includes('flida=error')) {
-      setFlidaError(true);
-      // Плашка висит максимум 3 секунды, затем гаснет и чистит URL.
-      const t = setTimeout(() => {
-        setFlidaError(false);
-        window.history.replaceState(null, '', window.location.pathname);
-      }, 3000);
-      return () => clearTimeout(t);
+      showFlidaError('Не удалось войти через Флида ID — попробуй ещё раз или войди по email.');
+      return;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -82,6 +88,22 @@ export default function LoginPage() {
     }
   };
 
+  // Вход через Флида ID (Web SDK, public-клиент без секрета):
+  // authorize() в redirect-режиме запускает переход на Флиду и возвращает undefined —
+  // токены заберёт /flida/finish через autoAuthorization. Прямо из клика вызываем,
+  // чтобы браузер не резал навигацию.
+  const flidaSignIn = async () => {
+    if (flidaBusy) return;
+    setFlidaBusy(true);
+    try {
+      const sdk = await getFlidaSdk();
+      await sdk.authorize();
+    } catch (err) {
+      if (!isAbortError(err)) showFlidaError(flidaErrorMessage(err));
+    } finally {
+      setFlidaBusy(false);
+    }
+  };
   // Сегментированный стеклянный контрол: активный таб — выпуклая пилюля.
   const tab = (m: 'signin' | 'signup', label: string) => (
     <button
@@ -93,8 +115,8 @@ export default function LoginPage() {
       }}
       className={
         mode === m
-          ? 'flex-1 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-gray-900 shadow-[0_2px_10px_rgba(20,26,38,0.15),inset_0_1px_1px_rgba(255,255,255,0.9)] dark:bg-white/20 dark:text-white'
-          : 'flex-1 rounded-full px-4 py-1.5 text-sm font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'
+          ? 'flex-1 rounded-full bg-white px-4 py-1.5 text-sm font-medium text-gray-900 shadow-[0_2px_10px_rgba(20,26,38,0.15),inset_0_1px_1px_rgba(255,255,255,0.9)] transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none dark:bg-white/20 dark:text-white'
+          : 'flex-1 rounded-full px-4 py-1.5 text-sm font-medium text-gray-500 transition-all duration-200 ease-out hover:scale-[1.05] hover:text-gray-800 active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none dark:text-gray-400 dark:hover:text-gray-100'
       }
     >
       {label}
@@ -135,7 +157,7 @@ export default function LoginPage() {
       onClick={() => setShow(!show)}
       aria-label={show ? 'Скрыть пароль' : 'Показать пароль'}
       aria-pressed={show}
-      className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+      className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 transition-all duration-200 ease-out hover:scale-110 hover:text-gray-800 active:scale-95 motion-reduce:transform-none motion-reduce:transition-none dark:text-gray-400 dark:hover:text-gray-100"
     >
       {eyeIcon(show)}
     </button>
@@ -165,16 +187,18 @@ export default function LoginPage() {
   );
 
   const flidaBtn =
-    'mt-4 flex w-full items-center justify-center gap-2 rounded-full border border-white/60 bg-white/50 ' +
-    'px-4 py-2 text-sm font-bold text-gray-700 backdrop-blur-xl transition ' +
+    'mt-4 flex w-full transform-gpu items-center justify-center gap-2 rounded-full border border-white/60 bg-white/50 ' +
+    'px-4 py-2 text-sm font-bold text-gray-700 backdrop-blur-xl transition-all duration-200 ease-out ' +
+    'hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ' +
     'shadow-[inset_0_1px_1px_rgba(255,255,255,0.9),0_6px_18px_-8px_rgba(20,26,38,0.4)] ' +
     'hover:bg-white/70 dark:border-white/20 dark:bg-white/10 dark:text-gray-100 dark:hover:bg-white/20';
 
   const submitBtn =
-    'w-full rounded-full bg-[#141a26]/90 px-6 py-2.5 text-sm font-medium tracking-wide text-white ' +
-    'backdrop-blur-xl transition hover:bg-[#141a26] disabled:opacity-50 ' +
+    'w-full transform-gpu rounded-full bg-[#141a26]/90 px-6 py-2.5 text-sm font-medium tracking-wide text-white ' +
+    'backdrop-blur-xl transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-[#141a26] active:scale-[0.98] disabled:opacity-50 ' +
+    'motion-reduce:transform-none motion-reduce:transition-none ' +
     'shadow-[inset_0_1px_1px_rgba(255,255,255,0.25),0_14px_30px_-10px_rgba(20,26,38,0.6)] ' +
-    'focus:outline-none focus:ring-2 focus:ring-blue-300/60';
+    'focus:outline-none focus:ring-2 focus:ring-blue-300/60 focus-visible:scale-[1.05]';
 
   const divider = (label: string) => (
     <div className="mt-3 flex items-center justify-between">
@@ -190,12 +214,19 @@ export default function LoginPage() {
     'shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_24px_60px_-16px_rgba(20,26,38,0.35)] ' +
     'dark:border-white/20 dark:bg-gray-900/40';
 
-  const flidaErrorBox = (hint: string) =>
-    flidaError && (
-      <div className="mt-3 rounded-2xl border border-red-200/70 bg-red-50/80 px-4 py-2 text-sm text-red-700 backdrop-blur-xl">
-        {hint}
-      </div>
-    );
+  const flidaErrorBox = flidaError && (
+    <div className="mt-3 rounded-2xl border border-red-200/70 bg-red-50/80 px-4 py-2 text-sm text-red-700 backdrop-blur-xl">
+      {flidaError}
+    </div>
+  );
+
+  // Кнопка Флида ID: запускает Web SDK (public-клиент, секрета нет) прямо из клика.
+  const flidaButton = (label: string) => (
+    <button type="button" onClick={flidaSignIn} disabled={flidaBusy} className={flidaBtn}>
+      {flidaLogo}
+      <span>{flidaBusy ? 'Открываем Флида ID…' : label}</span>
+    </button>
+  );
 
   return (
     <section
@@ -209,7 +240,7 @@ export default function LoginPage() {
         <div className="mb-3 w-full max-w-md">
           <Link
             href="/"
-            className="inline-block rounded-full border border-white/60 bg-white/40 px-4 py-1.5 text-sm font-medium text-gray-700 backdrop-blur-xl transition hover:bg-white/60 dark:border-white/20 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20"
+            className="inline-block transform-gpu rounded-full border border-white/60 bg-white/40 px-4 py-1.5 text-sm font-medium text-gray-700 backdrop-blur-xl transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-white/60 active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none dark:border-white/20 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20"
           >
             ← На главную
           </Link>
@@ -228,26 +259,9 @@ export default function LoginPage() {
 
             <p className="mt-2 text-center text-lg text-gray-600 dark:text-gray-200">С возвращением!</p>
 
-            {/*
-              ═══════════════════════════════════════════════════════════════
-              ФРОНТЕНДЕР, НЕ ПЕРЕЖИВАЙ ПРО ЭТУ КНОПКУ.
-              Это обычная ссылка, никакой логики тут нет и не надо:
-              1. Клик уходит на /backend/... — Next-прокси отдаёт его Java-бэкенду.
-              2. Java сам редиректит браузер на страницу Флиды, сам меняет код
-                 на токены С СЕКРЕТОМ (секрет живёт только в env бэкенда) и сам
-                 кладёт юзера в Postgres.
-              3. Успех возвращается 302 на /flida/finish#token=НАШ_JWT —
-                 та страница просто кладёт токен в localStorage (см. finish/page.tsx).
-              4. Ошибка возвращается 302 сюда с ?flida=error — показываем плашку ниже.
-              Ни SDK, ни fetch, ни секретов на этой стороне. Не чинить — работает.
-              ═══════════════════════════════════════════════════════════════
-            */}
-            <a href="/backend/auth/flida/login" className={flidaBtn}>
-              {flidaLogo}
-              <span>Войти через Флида ID</span>
-            </a>
+            {flidaButton('Войти через Флида ID')}
 
-            {flidaErrorBox('Не удалось войти через Флида ID — попробуй ещё раз или войди по email.')}
+            {flidaErrorBox}
 
             {divider('или войдите по почте')}
 
@@ -305,12 +319,9 @@ export default function LoginPage() {
               {tab('signup', 'Регистрация')}
             </div>
 
-            <a href="/backend/auth/flida/login" className={flidaBtn}>
-              {flidaLogo}
-              <span>Зарегистрироваться через Флида ID</span>
-            </a>
+            {flidaButton('Зарегистрироваться через Флида ID')}
 
-            {flidaErrorBox('Не удалось войти через Флида ID — попробуй ещё раз или зарегистрируйся по email.')}
+            {flidaErrorBox}
 
             {divider('или по почте')}
 

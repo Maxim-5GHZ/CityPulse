@@ -53,34 +53,41 @@ HTTP на 80-м порту редиректит на HTTPS. Остановка �
 - На старте сидится админ из `APP_ADMIN_EMAIL` / `APP_ADMIN_PASSWORD` (дефолт в `.env.example`).
 - Фронт: главная показывает статус бэкенда/БД + вход/регистрация на `/login`, токен в `localStorage`.
   Браузер ходит в API через same-origin `/backend/*` (прокси Next в dev, nginx в prod) — CORS не нужен.
-- Вход через **Флида ID**: кнопка на `/login` — обычная ссылка, весь OIDC-флоу живёт в Java
-  (confidential-клиент, `client_secret` только в env бэкенда). Подробности — в разделе «Вход через Флида ID».
+- Вход через **Флида ID (Web SDK, public-клиент без секрета)**: кнопка на `/login`
+  запускает `sdk.authorize()` в redirect-режиме, callback принимает `/flida/finish`
+  через `autoAuthorization`, фронт меняет Flida `access_token` на наш JWT через
+  `POST /api/auth/flida` (бэкенд перепроверяет
+  токен через `userinfo` сервер-сервер). Подробности — в разделе «Вход через Флида ID».
 
 ## Вход через Флида ID (как это работает)
 
-Фронтендер, не переживай: на фронте никакой логики — кнопка-ссылка
-и страница-приёмник `/flida/finish` (комменты прямо в коде). Всё остальное — бэкенд:
+Схема — Web SDK (public-клиент, секрета нет вообще, `scope` не передаём — он из настроек
+проекта в консоли). `client_id` публичный, живёт в `NEXT_PUBLIC_FLIDA_CLIENT_ID`:
 
-1. Клик → `GET /backend/auth/flida/login` → Java отвечает **302** на страницу Флиды
-   (`client_id` + PKCE `S256` + `state`; пара хранится в памяти бэкенда 15 минут).
-2. Юзер логинится у Флиды → та редиректит на зарегистрированный `redirect_uri`
-   (`/flida/oauth2/callback?code&state`), который смотрит на фронт-origin,
-   а обрабатывает бэкенд (dev: rewrite в `next.config.js`, prod: `location` в nginx).
-3. Java меняет код на токены **секретом** (сервер-сервер), дёргает `userinfo`,
-   находит юзера по `flida_sub` (иначе цепляет к тому же email, иначе создаёт без пароля —
-   осознанное упрощение для хакатона) и выпускает **наш** JWT.
-4. Успех → **302** на `/flida/finish#token=<наш JWT>` (фрагмент `#` не уходит в сеть
-   и не пишется в логи); страница кладёт токен в `localStorage`, дальше всё как обычно.
-   Ошибка → **302** на `/login?flida=error`.
+1. Клик по кнопке на `/login` → `sdk.authorize()` (redirect, `fedcm: []`) → браузер
+   уходит на страницу Флиды (state/PKCE `S256` генерит и хранит сам SDK).
+2. Юзер логинится у Флиды → та редиректит на зарегистрированный `redirectUri`
+   (`<origin>/flida/finish?code&state`) — обычная страница Next, SDK в ней через
+   `autoAuthorization` проверяет транзакцию из `sessionStorage` и сам меняет код
+   на токены (`POST /api/oidc/token` с `client_id` без секрета).
+3. Фронт шлёт Flida `access_token` на `POST /api/auth/flida` → Java идёт в `userinfo`
+   с `Bearer` сервер-сервер, находит юзера по `flida_sub` (иначе цепляет к тому же
+   email, иначе создаёт без пароля) и выпускает **наш** JWT.
+4. Страница кладёт наш JWT в `localStorage` (тот же `AuthContext`, что email-вход),
+   чистит `?code&state` через `history.replaceState` и уводит на `/workspace`.
+   Ошибка (`FlidaError` или 400 от нашей ручки) — плашка на 3 секунды.
 
 Нюансы:
 
-- `redirect_uri` в `.env` должен **побуквенно** совпадать с Redirect URL в консоли Флида ID.
+- `redirectUri` (`origin + /flida/finish`) должен **побуквенно** совпадать с Redirect URL
+  в консоли Флида ID (раздел **Платформы | Web**): зарегистрируй
+  `http://localhost:3000/flida/finish` (dev) и боевой origin (prod).
 - Локальный `make prod` ходит с origin `https://localhost` — он не зарегистрирован,
-  поэтому кнопку Флиды там не жмём; боевой флоу живёт на `https://hotcodeband.ru`.
-- Если Флида не отдаёт `email` (скопы в консоли) или путь authorize отличается от
-  `/api/oidc/authorize` — правятся `FLIDA_*` в `.env`, код трогать не надо.
-- Секрет из чата/переписки — перевыпусти в консоли при случае.
+  поэтому кнопку Флиды там не жмём; боевой флоу живёт на боевом домене.
+- `NEXT_PUBLIC_*` запекается в `next build` — в prod `client_id` пробрасывается через
+  `args` фронта (см. `docker-compose.prod.yml` + `Dockerfile.prod`).
+- FedCM выключен (`fedcm: []`); включается вторым заходом через `['active','passive']`
+  + `autoAuthorization` на `/login`.
 
 ## Переменные окружения (один `.env` на всё)
 
@@ -94,12 +101,8 @@ HTTP на 80-м порту редиректит на HTTPS. Остановка �
 | `JWT_SECRET`        | `change-me-...` (**смени!**)             | подпись JWT, минимум 32 символа     |
 | `APP_ADMIN_EMAIL`   | `admin@citypulse.local`                  | сид админа (пусто = не создавать)   |
 | `APP_ADMIN_PASSWORD`| `admin`                                  | пароль сид-админа                   |
-| `FLIDA_CLIENT_ID/SECRET` | — (взять в консоли Флида)             | только бэкенду! во фронт нельзя     |
-| `FLIDA_AUTHORIZE/TOKEN/USERINFO_URI` | `https://id.flida.ru/api/oidc/...` | эндпоинты провайдера         |
-| `FLIDA_DEV_REDIRECT_URI` | `http://localhost:3000/flida/oauth2/callback` | должен совпадать с консолью  |
-| `FLIDA_DEV_FRONTEND_URL` | `http://localhost:3000`               | куда класть JWT после входа (dev)   |
-| `FLIDA_PROD_REDIRECT_URI` | `https://hotcodeband.ru/flida/oauth2/callback` | то же для прода            |
-| `FLIDA_PROD_FRONTEND_URL` | `https://hotcodeband.ru`              | куда класть JWT после входа (prod)  |
+| `FLIDA_USERINFO_URI` | `https://id.flida.ru/api/oidc/...` | бэкенд проверяет Flida access_token |
+| `NEXT_PUBLIC_FLIDA_CLIENT_ID` | — (взять в консоли Флида) | публичный client_id для Web SDK во фронт |
 
 ## Структура
 
@@ -111,8 +114,8 @@ docker-compose.prod.yml  # prod: те же + nginx с SSL (докладывае�
 backend/                 # Spring Boot: web, JPA, security(JWT), flyway, postgres
   Dockerfile / Dockerfile.dev
   src/main/java/ru/citypulse/backend/
-    controller/  AuthController, FlidaController, MeController, HealthController, GlobalExceptionHandler
-    service/     AuthService, FlidaService, AdminBootstrap
+    controller/  AuthController, MeController, HealthController, GlobalExceptionHandler
+    service/     AuthService (включая обмен Flida access_token на наш JWT), AdminBootstrap
     security/    JwtService, JwtAuthFilter + config/SecurityConfig, config/FlidaProps
     domain/      User   repository/ UserRepository
   src/main/resources/{application.yml,db/migration/V1__users.sql,db/migration/V2__flida.sql}
