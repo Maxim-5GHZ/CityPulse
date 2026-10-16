@@ -12,7 +12,7 @@ import type { Building, DistrictModel } from '@/lib/city/model';
 import { seedModel } from '@/lib/city/seed';
 import { withOsmBuildings } from '@/lib/city/osm';
 import { calcMetrics, diffMetrics } from '@/lib/city/metrics';
-import { canonicalGraph, sha1Hex } from '@/lib/city/graph';
+import { buildAdj, canonicalGraph, dijkstraWithPrev, sha1Hex, shortestPath } from '@/lib/city/graph';
 import { PRESETS, rectFootprint, type PresetSpec } from '@/lib/city/buildings';
 import { shadePct, shadowOffset, shadowPolygon, sunAt } from '@/lib/city/shadow';
 
@@ -81,6 +81,9 @@ export default function ConstructorPage() {
   const [parkN, setParkN] = useState(400);
   const [preset, setPreset] = useState<PresetSpec>(PRESETS[0]);
   const [addMode, setAddMode] = useState(false);
+  const [edgeMode, setEdgeMode] = useState(false);
+  const [edgeFrom, setEdgeFrom] = useState<string | null>(null);
+  const [showRoutes, setShowRoutes] = useState(true);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>(null);
   const [selectedBld, setSelectedBld] = useState<string | null>(null);
   const [hash, setHash] = useState('');
@@ -112,8 +115,37 @@ export default function ConstructorPage() {
   const diff = useMemo(() => diffMetrics(baseline, current), [baseline, current]);
 
   useEffect(() => {
-    sha1Hex(canonicalGraph(model.edges)).then(setHash).catch(() => setHash(''));
+    sha1Hex(canonicalGraph(model)).then(setHash).catch(() => setHash(''));
   }, [model]);
+
+  /** Геометрия кратчайших путей домов до ближайшей остановки (считает Dijkstra). */
+  const routeLines = useMemo<[number, number][][]>(() => {
+    if (!showRoutes) return [];
+    const adj = buildAdj(model.edges);
+    const nodeById = new Map(model.nodes.map((n) => [n.id, n]));
+    const stops = model.attractions.filter((a) => a.kind === 'ostanovka');
+    const out: [number, number][][] = [];
+    for (const h of model.houses) {
+      const { dist } = dijkstraWithPrev(adj, h.nodeId);
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (const s of stops) {
+        const d = dist.get(s.nodeId);
+        if (d != null && d < bestD) {
+          bestD = d;
+          best = s.nodeId;
+        }
+      }
+      if (!best) continue;
+      const chain = shortestPath(adj, h.nodeId, best);
+      if (!chain) continue;
+      out.push(chain.map((id) => {
+        const n = nodeById.get(id)!;
+        return [n.x, n.y];
+      }));
+    }
+    return out;
+  }, [model, showRoutes]);
 
   const sun = useMemo(() => {
     const d = new Date();
@@ -145,16 +177,46 @@ export default function ConstructorPage() {
     setModel((m) => ({ ...m, edges: m.edges.map((e) => (e.id === edgeId ? { ...e, closed: !e.closed } : e)) }));
   }, []);
 
-  const moveAttr = useCallback(
+  const moveAttr = useCallback((attrId: string, nodeId: string) => {
+    setModel((m) => ({
+      ...m,
+      attractions: m.attractions.map((a) => (a.id === attrId ? { ...a, nodeId } : a)),
+    }));
+    setSelectedAttrId(null);
+  }, []);
+
+  const deleteEdge = useCallback((edgeId: string) => {
+    setModel((m) => ({ ...m, edges: m.edges.filter((e) => e.id !== edgeId) }));
+  }, []);
+
+  /** Клик по узлу в режиме перехода: первая точка — запомнить, вторая — создать/удалить ребро. */
+  const pickNode = useCallback(
     (nodeId: string) => {
-      if (!selectedAttrId) return;
-      setModel((m) => ({
-        ...m,
-        attractions: m.attractions.map((a) => (a.id === selectedAttrId ? { ...a, nodeId } : a)),
-      }));
-      setSelectedAttrId(null);
+      if (!edgeFrom) {
+        setEdgeFrom(nodeId);
+        return;
+      }
+      if (edgeFrom === nodeId) {
+        setEdgeFrom(null);
+        return;
+      }
+      setModel((m) => {
+        const exists = m.edges.find(
+          (e) => (e.a === edgeFrom && e.b === nodeId) || (e.a === nodeId && e.b === edgeFrom),
+        );
+        if (exists) return { ...m, edges: m.edges.filter((e) => e.id !== exists.id) };
+        const A = m.nodes.find((n) => n.id === edgeFrom);
+        const B = m.nodes.find((n) => n.id === nodeId);
+        if (!A || !B) return m;
+        const length = Math.round(Math.hypot(B.x - A.x, B.y - A.y) * 10) / 10;
+        return {
+          ...m,
+          edges: [...m.edges, { id: `e-${Date.now()}`, a: edgeFrom, b: nodeId, length, type: 'perehod' as const }],
+        };
+      });
+      setEdgeFrom(null);
     },
-    [selectedAttrId],
+    [edgeFrom],
   );
 
   const addBuilding = useCallback(
@@ -180,6 +242,8 @@ export default function ConstructorPage() {
     setSelectedAttrId(null);
     setSelectedBld(null);
     setAddMode(false);
+    setEdgeMode(false);
+    setEdgeFrom(null);
   }, []);
 
   if (!ready) {
@@ -227,14 +291,21 @@ export default function ConstructorPage() {
             Реальные коробки центра из OpenStreetMap ({osmCount || '…'}). Данные условные, не прогноз (п.11).
             {osmError && <span className="text-red-700 dark:text-red-300"> {osmError} — работаем на сиде.</span>}
           </p>
-          {selAttr && (
+          {selAttr && !edgeMode && (
             <p className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-300" aria-live="polite">
-              Переносим «{selAttr.label}»: кликни по узлу сети (тёмные точки — дома).
+              Переносим «{selAttr.label}»: кликни по узлу сети (тёмные точки — дома) или потяни маркер.
             </p>
           )}
           {addMode && (
             <p className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-300" aria-live="polite">
               Кликни по карте — поставим «{preset.label}» ({preset.w}×{preset.d} м, h={preset.h} м).
+            </p>
+          )}
+          {edgeMode && (
+            <p className="mt-2 text-sm font-medium text-blue-700 dark:text-blue-300" aria-live="polite">
+              {edgeFrom
+                ? 'Первая точка выбрана (синяя). Кликни по второму узлу — создадим переход; повторный клик по паре — удалит.'
+                : 'Кликни по первому узлу сети. Клик по синему переходу в этом режиме — удалить его.'}
             </p>
           )}
           <div className="mt-3">
@@ -243,10 +314,15 @@ export default function ConstructorPage() {
                 model={model}
                 selectedAttrId={selectedAttrId}
                 addMode={addMode}
+                edgeMode={edgeMode}
+                edgeFrom={edgeFrom}
+                routeLines={routeLines}
                 shadowPolys={shadowPolys}
                 onToggleEdge={toggleEdge}
+                onDeleteEdge={deleteEdge}
                 onSelectAttr={setSelectedAttrId}
                 onMoveAttrToNode={moveAttr}
+                onNodePick={pickNode}
                 onAddAt={addBuilding}
                 className={mapCls}
               />
@@ -255,8 +331,8 @@ export default function ConstructorPage() {
             )}
           </div>
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Клик по переходу — закрыть/открыть · клик по О/П/Ш — выбрать, затем клик по узлу — перенести ·{' '}
-            <span className="font-mono">hash {hash.slice(0, 10) || '…'}</span> · © OpenStreetMap
+            Клик по переходу — закрыть/открыть · клик по О/П/Ш — выбрать, затем клик по узлу или drag — перенести ·{' '}
+            <span className="font-mono">seed 2040 · hash {hash.slice(0, 10) || '…'}</span> · © OpenStreetMap
           </p>
         </section>
 
@@ -268,8 +344,31 @@ export default function ConstructorPage() {
               <button type="button" onClick={() => setAddMode((v) => !v)} className={addMode ? pillActive : pillBtn} aria-pressed={addMode}>
                 {addMode ? 'Отмена' : '+ Коробка'}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEdgeMode((v) => !v);
+                  setEdgeFrom(null);
+                  setSelectedAttrId(null);
+                }}
+                className={edgeMode ? pillActive : pillBtn}
+                aria-pressed={edgeMode}
+              >
+                {edgeMode ? 'Отмена' : '+ Переход'}
+              </button>
               <button type="button" onClick={reset} className={pillBtn}>
                 Сбросить
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRoutes((v) => !v)}
+                className={showRoutes ? pillActive : pillBtn}
+                aria-pressed={showRoutes}
+                title="Синие пунктиры — кратчайшие пути домов до остановки"
+              >
+                Маршруты
               </button>
             </div>
             <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Пресет здания">

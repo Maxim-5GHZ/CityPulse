@@ -15,6 +15,7 @@ import Point from 'ol/geom/Point.js';
 import LineString from 'ol/geom/LineString.js';
 import Polygon from 'ol/geom/Polygon.js';
 import { fromLonLat, toLonLat } from 'ol/proj.js';
+import Translate from 'ol/interaction/Translate.js';
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style.js';
 import type { DistrictModel } from '@/lib/city/model';
 import { gridToLonLat, lonLatToGrid } from '@/lib/city/proj';
@@ -23,10 +24,16 @@ interface Props {
   model: DistrictModel;
   selectedAttrId: string | null;
   addMode: boolean;
+  edgeMode: boolean;
+  edgeFrom: string | null;
+  /** геометрия кратчайших путей домов до остановки (синие пунктиры) */
+  routeLines: [number, number][][];
   shadowPolys: [number, number][][];
   onToggleEdge: (edgeId: string) => void;
+  onDeleteEdge: (edgeId: string) => void;
   onSelectAttr: (attrId: string | null) => void;
-  onMoveAttrToNode: (nodeId: string) => void;
+  onMoveAttrToNode: (attrId: string, nodeId: string) => void;
+  onNodePick: (nodeId: string) => void;
   onAddAt: (x: number, y: number) => void;
   className?: string;
 }
@@ -36,17 +43,20 @@ const g2map = (x: number, y: number): [number, number] => {
   return fromLonLat([lon, lat]) as [number, number];
 };
 
-export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, onToggleEdge, onSelectAttr, onMoveAttrToNode, onAddAt, className }: Props) {
+export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edgeFrom, routeLines, shadowPolys, onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt, className }: Props) {
   const divRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
   const buildSrc = useRef(new VectorSource());
   const netSrc = useRef(new VectorSource());
   const attrSrc = useRef(new VectorSource());
   const shSrc = useRef(new VectorSource());
-  const cbRef = useRef({ onToggleEdge, onSelectAttr, onMoveAttrToNode, onAddAt });
-  cbRef.current = { onToggleEdge, onSelectAttr, onMoveAttrToNode, onAddAt };
-  const stateRef = useRef({ selectedAttrId, addMode });
-  stateRef.current = { selectedAttrId, addMode };
+  const routeSrc = useRef(new VectorSource());
+  const cbRef = useRef({ onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt });
+  cbRef.current = { onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt };
+  const stateRef = useRef({ selectedAttrId, addMode, edgeMode });
+  stateRef.current = { selectedAttrId, addMode, edgeMode };
+  const modelRef = useRef(model);
+  modelRef.current = model;
 
   // Создание карты один раз.
   useEffect(() => {
@@ -61,12 +71,42 @@ export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, o
       style: new Style({ fill: new Fill({ color: 'rgba(143,163,184,0.55)' }), stroke: new Stroke({ color: '#475569', width: 1.2 }) }),
     });
     const netLayer = new VectorLayer({ source: netSrc.current });
+    const routeLayer = new VectorLayer({
+      source: routeSrc.current,
+      style: new Style({ stroke: new Stroke({ color: '#2563eb', width: 3, lineDash: [8, 6] }) }),
+    });
     const attrLayer = new VectorLayer({ source: attrSrc.current });
     const map = new OlMap({
       target: divRef.current,
-      layers: [osm, shLayer, buildLayer, netLayer, attrLayer],
+      layers: [osm, shLayer, buildLayer, netLayer, routeLayer, attrLayer],
       view: new View({ center: fromLonLat([36.61, 55.096]), zoom: 15 }),
     });
+    // Drag остановки: тянем маркер, на отпускании — snap к ближайшему узлу.
+    const translate = new Translate({
+      layers: [attrLayer],
+      filter: (f) => f.get('kind') === 'attr',
+      hitTolerance: 8,
+    });
+    translate.on('translateend', (ev) => {
+      const feat = ev.features.item(0);
+      const attrId = feat?.get('attrId') as string | undefined;
+      const geom = feat?.getGeometry() as Point | undefined;
+      const coords = geom?.getCoordinates() as [number, number] | undefined;
+      if (!coords || !attrId) return;
+      const [lon, lat] = toLonLat(coords);
+      const [gx, gy] = lonLatToGrid(lon, lat);
+      let best: string | null = null;
+      let bestD = Infinity;
+      for (const n of modelRef.current.nodes) {
+        const d = Math.hypot(n.x - gx, n.y - gy);
+        if (d < bestD) {
+          bestD = d;
+          best = n.id;
+        }
+      }
+      if (best) cbRef.current.onMoveAttrToNode(attrId, best);
+    });
+    map.addInteraction(translate);
     map.on('singleclick', (e) => {
       const cb = cbRef.current;
       const st = stateRef.current;
@@ -77,28 +117,40 @@ export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, o
         cb.onAddAt(Math.round(gx), Math.round(gy));
         return;
       }
-      // Приоритет: ребро -> переключить; точка притяжения -> выбрать; узел при выбранном -> перенести.
-      let handled = false;
-      map.forEachFeatureAtPixel(e.pixel, (f) => {
-        const kind = f.get('kind');
-        if (kind === 'edge') {
-          cb.onToggleEdge(f.get('edgeId'));
-          handled = true;
-          return true;
+      const feats = map.getFeaturesAtPixel(e.pixel) ?? [];
+      const byKind = (kind: string) => feats.find((f) => f.get('kind') === kind);
+      // Режим перехода: узел — выбрать пару, переход — удалить.
+      if (st.edgeMode) {
+        const node = byKind('node');
+        if (node) {
+          cb.onNodePick(node.get('nodeId'));
+          return;
         }
-        if (kind === 'attr') {
-          cb.onSelectAttr(f.get('attrId'));
-          handled = true;
-          return true;
+        const edge = byKind('edge');
+        if (edge) {
+          if (edge.get('edgeType') === 'perehod') cb.onDeleteEdge(edge.get('edgeId'));
+          else cb.onToggleEdge(edge.get('edgeId'));
+          return;
         }
-        if (kind === 'node' && st.selectedAttrId) {
-          cb.onMoveAttrToNode(f.get('nodeId'));
-          handled = true;
-          return true;
-        }
-        return false;
-      });
-      if (!handled) cb.onSelectAttr(null);
+        return;
+      }
+      // Обычный режим: ребро -> переключить; притяжение -> выбрать; узел при выбранном -> перенести.
+      const edge = byKind('edge');
+      if (edge) {
+        cb.onToggleEdge(edge.get('edgeId'));
+        return;
+      }
+      const attr = byKind('attr');
+      if (attr) {
+        cb.onSelectAttr(attr.get('attrId'));
+        return;
+      }
+      const node = byKind('node');
+      if (node && st.selectedAttrId) {
+        cb.onMoveAttrToNode(st.selectedAttrId, node.get('nodeId'));
+        return;
+      }
+      cb.onSelectAttr(null);
     });
     mapRef.current = map;
     return () => {
@@ -139,6 +191,7 @@ export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, o
       const f = new Feature({ geometry: new LineString([g2map(A.x, A.y), g2map(B.x, B.y)]) });
       f.set('kind', 'edge');
       f.set('edgeId', e.id);
+      f.set('edgeType', e.type);
       f.setStyle(
         new Style({
           stroke: new Stroke({
@@ -152,19 +205,30 @@ export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, o
     }
     for (const n of model.nodes) {
       const isHouse = model.houses.some((h) => h.nodeId === n.id);
+      const isFrom = n.id === edgeFrom;
       const f = new Feature({ geometry: new Point(g2map(n.x, n.y)) });
       f.set('kind', 'node');
       f.set('nodeId', n.id);
       f.setStyle(
         new Style({
           image: new CircleStyle({
-            radius: isHouse ? 6 : 4,
+            radius: isFrom ? 7 : isHouse ? 6 : 4,
             fill: new Fill({ color: isHouse ? '#1e293b' : '#ffffff' }),
-            stroke: new Stroke({ color: '#1e293b', width: 1.5 }),
+            stroke: new Stroke({ color: isFrom ? '#2563eb' : '#1e293b', width: isFrom ? 3 : 1.5 }),
           }),
         }),
       );
       netSrc.current.addFeature(f);
+    }
+    // Маршруты домов до остановки (синие пунктиры).
+    routeSrc.current.clear();
+    for (const line of routeLines) {
+      if (line.length < 2) continue;
+      try {
+        routeSrc.current.addFeature(new Feature({ geometry: new LineString(line.map(([x, y]) => g2map(x, y))) }));
+      } catch {
+        /* ignore */
+      }
     }
     // Притяжения.
     attrSrc.current.clear();
@@ -188,13 +252,13 @@ export default function CityMap({ model, selectedAttrId, addMode, shadowPolys, o
       );
       attrSrc.current.addFeature(f);
     }
-  }, [model, selectedAttrId, shadowPolys]);
+  }, [model, selectedAttrId, shadowPolys, edgeFrom, routeLines]);
 
   return (
     <div
       ref={divRef}
       role="img"
-      aria-label="Схема района: здания, пешеходная сеть, остановки и парк. Клик по переходу закрывает или открывает его."
+      aria-label="Схема района: здания, пешеходная сеть, остановки, парк и кратчайшие пути домов. Клик по переходу закрывает или открывает его, маркер остановки можно тянуть."
       className={
         className ??
         'h-[420px] w-full overflow-hidden rounded-[24px] border border-white/60 dark:border-white/20'
