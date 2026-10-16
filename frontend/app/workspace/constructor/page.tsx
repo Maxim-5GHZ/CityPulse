@@ -15,9 +15,11 @@ import { calcMetrics, diffMetrics } from '@/lib/city/metrics';
 import { buildAdj, canonicalGraph, dijkstraWithPrev, sha1Hex, shortestPath } from '@/lib/city/graph';
 import { PRESETS, rectFootprint, type PresetSpec } from '@/lib/city/buildings';
 import { shadePct, shadowOffset, shadowPolygon, sunAt } from '@/lib/city/shadow';
+import { buildConclusion } from '@/lib/city/conclusion';
 
 const CityMap = dynamic(() => import('@/components/city/CityMap'), { ssr: false });
 const City3D = dynamic(() => import('@/components/city/City3D'), { ssr: false });
+const ConclusionBox = dynamic(() => import('@/components/city/ConclusionBox'), { ssr: false });
 
 // Стекло как на /login и /workspace (см. AGENTS.md, cardCls).
 const cardCls =
@@ -152,6 +154,12 @@ export default function ConstructorPage() {
     d.setHours(hour, 0, 0, 0);
     return sunAt(d);
   }, [hour]);
+
+  /** Заключение-эвристика: вердикт + сработавшие правила (§9.7). */
+  const conclusion = useMemo(
+    () => buildConclusion({ model, baseline, current, hour, sun }),
+    [model, baseline, current, hour, sun],
+  );
 
   const shadowPolys = useMemo<[number, number][][]>(() => {
     const out: [number, number][][] = [];
@@ -466,8 +474,16 @@ export default function ConstructorPage() {
                 <li>Новая коробка закрывает ребра в радиусе ~60 м — обход удлиняет M1.</li>
                 <li>Тень: suncalc для Обнинска (55.096, 36.610), L=H/tan(alt). В 3D тот же вектор ставит свет.</li>
                 <li>Здания — реальные футпринты OSM (ODbL). Не точный двойник (п.7).</li>
+                <li>Заключение — эвристика из if-then правил (§9.7), без LLM.</li>
               </ul>
             </details>
+          </section>
+
+          <section className={cardCls} aria-label="Заключение">
+            <h2 className={sectionTitle}>Заключение</h2>
+            <div className="mt-3">
+              <ConclusionBox conclusion={conclusion} />
+            </div>
           </section>
         </aside>
       </main>
