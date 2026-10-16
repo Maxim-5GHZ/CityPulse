@@ -54,7 +54,7 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
   const attrSrc = useRef(new VectorSource());
   const shSrc = useRef(new VectorSource());
   const routeSrc = useRef(new VectorSource());
-  const windSrc = useRef(new VectorSource());
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const cbRef = useRef({ onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt });
   cbRef.current = { onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt };
   const stateRef = useRef({ selectedAttrId, addMode, edgeMode });
@@ -79,14 +79,10 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
       source: routeSrc.current,
       style: new Style({ stroke: new Stroke({ color: '#2563eb', width: 3, lineDash: [8, 6] }) }),
     });
-    const windLayer = new VectorLayer({
-      source: windSrc.current,
-      style: new Style({ stroke: new Stroke({ color: 'rgba(71,85,105,0.85)', width: 2 }) }),
-    });
     const attrLayer = new VectorLayer({ source: attrSrc.current });
     const map = new OlMap({
       target: divRef.current,
-      layers: [osm, shLayer, buildLayer, netLayer, routeLayer, windLayer, attrLayer],
+      layers: [osm, shLayer, buildLayer, netLayer, routeLayer, attrLayer],
       view: new View({ center: fromLonLat([36.61, 55.096]), zoom: 15 }),
     });
     // Drag остановки: тянем маркер, на отпускании — snap к ближайшему узлу.
@@ -238,22 +234,6 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
         /* ignore */
       }
     }
-    // Ветер: стрелки поля 8×8, длина — по скорости.
-    windSrc.current.clear();
-    if (windCells) {
-      for (const c of windCells) {
-        const len = 25 + c.speed * 6;
-        const ex = c.x + c.ux * len;
-        const ey = c.y + c.uy * len;
-        try {
-          windSrc.current.addFeature(
-            new Feature({ geometry: new LineString([g2map(c.x, c.y), g2map(ex, ey)]) }),
-          );
-        } catch {
-          /* ignore */
-        }
-      }
-    }
     // Притяжения.
     attrSrc.current.clear();
     const colors: Record<string, string> = { ostanovka: '#2563eb', park: '#16a34a', shkola: '#d97706' };
@@ -276,17 +256,131 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
       );
       attrSrc.current.addFeature(f);
     }
-  }, [model, selectedAttrId, shadowPolys, edgeFrom, routeLines, windCells]);
+  }, [model, selectedAttrId, shadowPolys, edgeFrom, routeLines]);
+
+  // Ветер частицами: canvas-оверлей поверх карты, адвекция по билинейной
+  // интерполяции поля 8×8. rAF и подписки чистятся при размонтировании,
+  // при prefers-reduced-motion — один статичный кадр.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const fit = () => {
+      const host = canvas.parentElement;
+      if (!host) return;
+      const r = host.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.max(1, Math.round(r.width * dpr));
+      canvas.height = Math.max(1, Math.round(r.height * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    if (canvas.parentElement) ro.observe(canvas.parentElement);
+
+    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const cells = windCells;
+    // Скорость ветра (м/с по сетке) в произвольной точке — билинейно по ячейкам.
+    const at = (x: number, y: number): [number, number] => {
+      if (!cells || cells.length !== 64) return [0, 0];
+      const step = 1000 / 8;
+      const fx = Math.min(6.999, Math.max(0, x / step - 0.5));
+      const fy = Math.min(6.999, Math.max(0, y / step - 0.5));
+      const i0 = Math.floor(fx);
+      const j0 = Math.floor(fy);
+      const tx = fx - i0;
+      const ty = fy - j0;
+      const vec = (i: number, j: number): [number, number] => {
+        const c = cells[Math.min(7, i) * 8 + Math.min(7, j)];
+        return [c.ux * c.speed, c.uy * c.speed];
+      };
+      const [ax, ay] = vec(i0, j0);
+      const [bx, by] = vec(i0 + 1, j0);
+      const [cx2, cy2] = vec(i0, j0 + 1);
+      const [dx, dy] = vec(i0 + 1, j0 + 1);
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+      return [lerp(lerp(ax, bx, tx), lerp(cx2, dx, tx), ty), lerp(lerp(ay, by, tx), lerp(cy2, dy, tx), ty)];
+    };
+
+    const rnd = () => ({ x: Math.random() * 1000, y: Math.random() * 1000 });
+    const parts = Array.from({ length: 220 }, rnd);
+    const map = mapRef.current;
+    const toPx = (x: number, y: number): [number, number] | null => {
+      if (!map) return null;
+      const px = map.getPixelFromCoordinate(g2map(x, y));
+      if (!px) return null;
+      return [px[0], px[1]];
+    };
+    const paint = () => {
+      const host = canvas.parentElement;
+      if (!host) return;
+      const r = host.getBoundingClientRect();
+      ctx.clearRect(0, 0, r.width, r.height);
+      if (!cells) return;
+      ctx.lineWidth = 1.5;
+      for (const p of parts) {
+        const a = toPx(p.x, p.y);
+        if (!a) continue;
+        const [vx, vy] = at(p.x, p.y);
+        const b = toPx(p.x + vx * 2.2, p.y + vy * 2.2); // короткий шлейф по ветру
+        if (!b) continue;
+        ctx.strokeStyle = dark ? 'rgba(148,163,184,0.55)' : 'rgba(71,85,105,0.55)';
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+        ctx.stroke();
+        ctx.fillStyle = dark ? 'rgba(203,213,225,0.9)' : 'rgba(30,41,59,0.9)';
+        ctx.beginPath();
+        ctx.arc(a[0], a[1], 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    if (reduced) {
+      paint(); // один статичный кадр
+      return () => ro.disconnect();
+    }
+    let raf = 0;
+    let last = performance.now();
+    const K = 25; // визуальное ускорение: м сетки за (м/с) в секунду
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      if (cells) {
+        for (const p of parts) {
+          const [vx, vy] = at(p.x, p.y);
+          p.x += vx * dt * K;
+          p.y += vy * dt * K;
+          if (p.x < 0 || p.x > 1000 || p.y < 0 || p.y > 1000 || (vx === 0 && vy === 0)) {
+            const s = rnd();
+            p.x = s.x;
+            p.y = s.y;
+          }
+        }
+      }
+      paint();
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [windCells]);
 
   return (
     <div
-      ref={divRef}
       role="img"
-      aria-label="Схема района: здания, пешеходная сеть, остановки, парк, кратчайшие пути домов и стрелки ветра. Клик по переходу закрывает или открывает его, маркер остановки можно тянуть."
-      className={
+      aria-label="Схема района: здания, пешеходная сеть, остановки, парк, кратчайшие пути домов и частицы ветра. Клик по переходу закрывает или открывает его, маркер остановки можно тянуть."
+      className={`relative ${
         className ??
         'h-[420px] w-full overflow-hidden rounded-[24px] border border-white/60 dark:border-white/20'
-      }
-    />
+      }`}
+    >
+      <div ref={divRef} className="absolute inset-0" />
+      <canvas ref={canvasRef} aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full" />
+    </div>
   );
 }
