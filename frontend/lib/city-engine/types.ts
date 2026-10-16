@@ -1,4 +1,4 @@
-export type NodeType = 'intersection' | 'bus_stop' | 'park_gate' | 'house_gate' | 'amenity_gate';
+export type NodeType = 'intersection' | 'bus_stop' | 'park_gate' | 'house_gate' | 'amenity_gate' | 'roundabout';
 
 export interface GraphNode {
   id: string;
@@ -7,6 +7,7 @@ export interface GraphNode {
   label: string;
   type: NodeType;
   isCustom?: boolean;
+  isRoundabout?: boolean; // Узел принадлежит кольцу (съезд/дуга/центр) — снос запрещён
 }
 
 export type EdgeType = 'road' | 'sidewalk' | 'crossing' | 'underpass' | 'park_path' | 'bike_lane';
@@ -19,8 +20,12 @@ export interface GraphEdge {
   type: EdgeType;
   isActive: boolean;
   isAccessible: boolean;
-  lanes?: number; // количество полос для автодороги
+  lanes?: 2 | 4;
+  hasSidewalkLeft?: boolean;
+  hasSidewalkRight?: boolean;
+  isRoundabout?: boolean;
   isCustom?: boolean;
+  loadCount?: number; // Нагрузка: сколько жителей проходит по этому ребру
 }
 
 export interface Building {
@@ -35,6 +40,7 @@ export interface Building {
   y: number;
   width: number;
   height: number;
+  polygon?: { x: number; y: number }[]; // Произвольный полигональный контур
   isCustom?: boolean;
 }
 
@@ -46,6 +52,7 @@ export interface Amenity {
   type: AmenityType;
   nodeId: string;
   coverageRadiusM: number;
+  polygon?: { x: number; y: number }[]; // Границы кастомного сквера/парка
   isCustom?: boolean;
 }
 
@@ -68,6 +75,12 @@ export interface PathResult {
   isFullyAccessible: boolean;
 }
 
+export interface CriticalBottleneck {
+  edgeId: string;
+  load: number;
+  description: string;
+}
+
 export interface DistrictMetrics {
   weightedAvgBusDistM: number;
   weightedAvgBusTimeMin: number;
@@ -79,4 +92,6 @@ export interface DistrictMetrics {
   budgetLimitRub: number;
   busPaths: Record<string, PathResult | null>;
   parkPaths: Record<string, PathResult | null>;
+  edgeLoads: Record<string, number>;
+  bottlenecks: CriticalBottleneck[];
 }

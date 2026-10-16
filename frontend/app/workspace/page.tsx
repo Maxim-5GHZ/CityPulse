@@ -1,23 +1,21 @@
+// frontend/app/workspace/page.tsx
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import AppHeader from '@/components/AppHeader';
 import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
 import DistrictMap3D from '@/components/city/DistrictMap3D';
+import DistrictToolbar from '@/components/city/DistrictToolbar';
+import DistrictSidebar from '@/components/city/DistrictSidebar';
+import ProjectsModal from '@/components/city/ProjectsModal';
 import { EMPTY_DISTRICT, OBNINSK_MARX_DISTRICT } from '@/lib/city-engine/presets';
 import { calculateMetrics } from '@/lib/city-engine/metrics';
+import { computePolygonAreaM2, findClosestNodeId } from '@/lib/city-engine/geometry';
+import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
 import { DistrictScenario, Building, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
-import { listProjects, createProject, updateProject, deleteProject, getProject, ProjectSummary } from '@/lib/projectApi';
-
-const cadBtn =
-  'px-3 py-1.5 text-xs font-mono font-medium rounded border border-gray-600 bg-gray-800 text-gray-200 ' +
-  'hover:bg-gray-700 hover:border-gray-500 active:bg-gray-900 transition-colors disabled:opacity-50';
-
-const cadBtnActive =
-  'px-3 py-1.5 text-xs font-mono font-semibold rounded border border-blue-500 bg-blue-600 text-white ' +
-  'hover:bg-blue-500 transition-colors shadow-sm';
+import { listProjects, createProject, updateProject, getProject, ProjectSummary } from '@/lib/projectApi';
 
 export default function WorkspacePage() {
   const { ready, token } = useAuth();
@@ -26,18 +24,35 @@ export default function WorkspacePage() {
   const [baseScenario, setBaseScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
   const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
+
+  // Мобильный таб: на смартфонах переключаемся между чертежом и панелью аудита
+  const [mobileTab, setMobileTab] = useState<'canvas' | 'inspector'>('canvas');
 
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>('Проект района 2040');
   const [projectsList, setProjectsList] = useState<ProjectSummary[]>([]);
   const [showProjectsModal, setShowProjectsModal] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
-  const [projectsError, setProjectsError] = useState<string | null>(null);
 
   const [simPlaying, setSimPlaying] = useState<boolean>(true);
   const [simSpeed, setSimSpeed] = useState<1 | 2 | 5>(1);
+
+  const [hint, setHint] = useState<{ id: number; text: string } | null>(null);
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showHint = (text: string) => {
+    if (hintTimer.current) clearTimeout(hintTimer.current);
+    setHint({ id: Date.now(), text });
+    hintTimer.current = setTimeout(() => setHint(null), 3000);
+  };
+  useEffect(
+    () => () => {
+      if (hintTimer.current) clearTimeout(hintTimer.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     if (ready && !token) router.replace('/login');
@@ -46,11 +61,10 @@ export default function WorkspacePage() {
   const refreshProjectsList = useCallback(async () => {
     if (!token) return;
     try {
-      setProjectsError(null);
       const list = await listProjects(token);
       setProjectsList(list);
     } catch {
-      setProjectsError('Не удалось загрузить проекты');
+      // Игнорируем ошибку получения списка
     }
   }, [token]);
 
@@ -67,27 +81,18 @@ export default function WorkspacePage() {
     [baseScenario],
   );
 
-  const busDelta = metrics.weightedAvgBusDistM - baseMetrics.weightedAvgBusDistM;
-  const parkDelta = metrics.parkAccessPercent - baseMetrics.parkAccessPercent;
   const activePath = selectedBuildingId ? metrics.busPaths[selectedBuildingId] : null;
   const activePathNodeIds = activePath ? activePath.pathNodeIds : [];
   const selectedBuilding = currentScenario.buildings.find((b) => b.id === selectedBuildingId);
+  const selectedEdge = currentScenario.edges.find((e) => e.id === selectedEdgeId) ?? null;
 
-  const findClosestNodeId = (x: number, y: number, nodes: GraphNode[]): string => {
-    let best = nodes[0]?.id ?? 'n1';
-    let minD = Infinity;
-    for (const n of nodes) {
-      const d = Math.hypot(n.x - x, n.y - y);
-      if (d < minD) {
-        minD = d;
-        best = n.id;
-      }
-    }
-    return best;
-  };
-
-  // Трассировка дорог и тротуаров
-  const handleAddRoad = (x1: number, y1: number, x2: number, y2: number, type: 'road' | 'sidewalk' | 'crossing' = 'sidewalk') => {
+  const handleAddRoad = (
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    type: 'road' | 'sidewalk' | 'crossing' = 'sidewalk',
+  ) => {
     setCurrentScenario((prev) => {
       let node1 = prev.nodes.find((n) => n.x === x1 && n.y === y1);
       let node2 = prev.nodes.find((n) => n.x === x2 && n.y === y2);
@@ -110,6 +115,8 @@ export default function WorkspacePage() {
         lengthM,
         type,
         lanes: type === 'road' ? 2 : undefined,
+        hasSidewalkLeft: type === 'road',
+        hasSidewalkRight: type === 'road',
         isActive: true,
         isAccessible: true,
         isCustom: true,
@@ -119,8 +126,58 @@ export default function WorkspacePage() {
     });
   };
 
-  // ПЕРЕХОД В 1 КЛИК: разбивает полосу автодороги перпендикуляром
-  const handleAddCrossingDirect = (edgeId: string, px: number, py: number) => {
+  const handleAddPolyBuilding = (points: { x: number; y: number }[]) => {
+    setCurrentScenario((prev) => {
+      const area = computePolygonAreaM2(points);
+      const floors = 12;
+      const estimatedResidents = Math.max(30, Math.round((area * floors) / 32));
+      const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
+
+      const newBuilding: Building = {
+        id: `b-${Date.now()}`,
+        name: `Корпус ${prev.buildings.length + 1} (Кастом)`,
+        address: 'Проектируемый квартал',
+        floors,
+        residentsPerFloor: Math.round(estimatedResidents / floors),
+        residents: estimatedResidents,
+        gateNodeId,
+        x: points[0].x,
+        y: points[0].y,
+        width: 60,
+        height: 40,
+        polygon: points,
+        isCustom: true,
+      };
+
+      setSelectedBuildingId(newBuilding.id);
+      return { ...prev, buildings: [...prev.buildings, newBuilding] };
+    });
+    setToolMode('select');
+  };
+
+  const handleAddPolyPark = (points: { x: number; y: number }[]) => {
+    setCurrentScenario((prev) => {
+      const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
+      const newAmenity: Amenity = {
+        id: `park-${Date.now()}`,
+        name: 'Проектируемый сквер',
+        type: 'park',
+        nodeId: gateNodeId,
+        coverageRadiusM: 350,
+        polygon: points,
+        isCustom: true,
+      };
+      return { ...prev, amenities: [...prev.amenities, newAmenity] };
+    });
+    setToolMode('select');
+  };
+
+  const handleAddCrossingDirect = (edgeId: string, px: number, py: number, isUnderpass = false) => {
+    const edge = currentScenario.edges.find((e) => e.id === edgeId);
+    if (edge && isRingEdge(edge)) {
+      showHint('На кольце переходы не строят — выберите обычную дорогу');
+      return;
+    }
     setCurrentScenario((prev) => {
       const edge = prev.edges.find((e) => e.id === edgeId);
       if (!edge) return prev;
@@ -134,8 +191,7 @@ export default function WorkspacePage() {
       const nx = len > 0 ? -dy / len : 0;
       const ny = len > 0 ? dx / len : 0;
 
-      // Два створа по обеим сторонам проезжей части (отступ 18px)
-      const nSide1: GraphNode = {
+      const n1: GraphNode = {
         id: `nc-${Date.now()}-1`,
         x: Math.round(px + nx * 18),
         y: Math.round(py + ny * 18),
@@ -143,7 +199,7 @@ export default function WorkspacePage() {
         type: 'intersection',
         isCustom: true,
       };
-      const nSide2: GraphNode = {
+      const n2: GraphNode = {
         id: `nc-${Date.now()}-2`,
         x: Math.round(px - nx * 18),
         y: Math.round(py - ny * 18),
@@ -154,121 +210,118 @@ export default function WorkspacePage() {
 
       const crossingEdge: GraphEdge = {
         id: `cross-${Date.now()}`,
-        from: nSide1.id,
-        to: nSide2.id,
-        lengthM: 35,
-        type: 'crossing',
+        from: n1.id,
+        to: n2.id,
+        lengthM: isUnderpass ? 55 : 35,
+        type: isUnderpass ? 'underpass' : 'crossing',
         isActive: true,
-        isAccessible: true,
+        isAccessible: !isUnderpass,
+        isCustom: true,
+      };
+
+      return { ...prev, nodes: [...prev.nodes, n1, n2], edges: [...prev.edges, crossingEdge] };
+    });
+    setToolMode('select');
+  };
+
+  const handleSplitAndBlockSpot = (edgeId: string, px: number, py: number) => {
+    const edge = currentScenario.edges.find((e) => e.id === edgeId);
+    if (edge && isRingEdge(edge)) {
+      showHint('Кольцо ремонтировать нельзя — перекройте примыкание');
+      return;
+    }
+    setCurrentScenario((prev) => {
+      const edge = prev.edges.find((e) => e.id === edgeId);
+      if (!edge) return prev;
+
+      const repairNode: GraphNode = {
+        id: `rn-${Date.now()}`,
+        x: px,
+        y: py,
+        label: 'Зона ремонта',
+        type: 'intersection',
+        isCustom: true,
+      };
+
+      const part1: GraphEdge = {
+        ...edge,
+        id: `ep1-${Date.now()}`,
+        from: edge.from,
+        to: repairNode.id,
+        lengthM: Math.round(edge.lengthM / 2),
+        isActive: true,
+        isCustom: true,
+      };
+
+      const part2: GraphEdge = {
+        ...edge,
+        id: `ep2-${Date.now()}`,
+        from: repairNode.id,
+        to: edge.to,
+        lengthM: Math.round(edge.lengthM / 2),
+        isActive: false,
         isCustom: true,
       };
 
       return {
         ...prev,
-        nodes: [...prev.nodes, nSide1, nSide2],
-        edges: [...prev.edges, crossingEdge],
+        nodes: [...prev.nodes, repairNode],
+        edges: [...prev.edges.filter((e) => e.id !== edgeId), part1, part2],
       };
     });
     setToolMode('select');
   };
 
-  // ПЕРЕКРЫТИЕ ПУТИ (РЕМОНТ / БЛОКИРОВКА)
-  const handleToggleBlockEdge = (edgeId: string) => {
+  const handleUpgradeLanes = (edgeId: string) => {
+    const edge = currentScenario.edges.find((e) => e.id === edgeId);
+    if (edge && isRingEdge(edge)) {
+      showHint('Полосы на кольце фиксированы (2)');
+      return;
+    }
     setCurrentScenario((prev) => ({
       ...prev,
-      edges: prev.edges.map((e) => (e.id === edgeId ? { ...e, isActive: !e.isActive } : e)),
+      edges: prev.edges.map((e) =>
+        e.id === edgeId ? { ...e, lanes: e.lanes === 4 ? 2 : 4, isCustom: true } : e,
+      ),
     }));
   };
 
-  // Добавление дома
-  const handleAddBuilding = (x: number, y: number) => {
-    setCurrentScenario((prev) => {
-      const gateNodeId = findClosestNodeId(x + 40, y + 25, prev.nodes);
-      const newBuilding: Building = {
-        id: `b-${Date.now()}`,
-        name: `Корпус ${prev.buildings.length + 1}`,
-        address: 'Проектируемый проезд',
-        floors: 9,
-        residentsPerFloor: 24,
-        residents: 216,
-        gateNodeId,
-        x,
-        y,
-        width: 80,
-        height: 50,
-        isCustom: true,
-      };
-      setSelectedBuildingId(newBuilding.id);
-      return { ...prev, buildings: [...prev.buildings, newBuilding] };
-    });
-    setToolMode('select');
-  };
-
-  // Добавление остановки или парка
-  const handleAddAmenity = (type: 'bus_stop' | 'park', x: number, y: number) => {
-    setCurrentScenario((prev) => {
-      let targetNode = prev.nodes.find((n) => Math.hypot(n.x - x, n.y - y) <= 25);
-      const newNodes = [...prev.nodes];
-      if (!targetNode) {
-        targetNode = {
-          id: `n-${Date.now()}`,
-          x,
-          y,
-          label: type === 'bus_stop' ? 'Остановка' : 'Сквер',
-          type: type === 'bus_stop' ? 'bus_stop' : 'park_gate',
-          isCustom: true,
-        };
-        newNodes.push(targetNode);
-      }
-
-      const newAmenity: Amenity = {
-        id: `a-${Date.now()}`,
-        name: type === 'bus_stop' ? 'Новая остановка' : 'Городской сквер',
-        type,
-        nodeId: targetNode.id,
-        coverageRadiusM: type === 'bus_stop' ? 500 : 350,
-        isCustom: true,
-      };
-      return { ...prev, nodes: newNodes, amenities: [...prev.amenities, newAmenity] };
-    });
-    setToolMode('select');
-  };
-
-  // Удаление
-  const handleDeleteBuilding = (id: string) => {
+  const handleToggleSidewalk = (edgeId: string, side: 'left' | 'right') => {
+    const edge = currentScenario.edges.find((e) => e.id === edgeId);
+    if (edge && isRingEdge(edge)) {
+      showHint('Тротуары на кольце не строят');
+      return;
+    }
     setCurrentScenario((prev) => ({
       ...prev,
-      buildings: prev.buildings.filter((b) => b.id !== id),
+      edges: prev.edges.map((e) => {
+        if (e.id !== edgeId) return e;
+        return side === 'left'
+          ? { ...e, hasSidewalkLeft: !e.hasSidewalkLeft, isCustom: true }
+          : { ...e, hasSidewalkRight: !e.hasSidewalkRight, isCustom: true };
+      }),
     }));
-    if (selectedBuildingId === id) setSelectedBuildingId(null);
+  };
+
+  const handleMakeRoundabout = (nodeId: string) => {
+    const plan = planRoundabout(currentScenario, nodeId);
+    if (!plan.ok) {
+      showHint(plan.error);
+      return;
+    }
+    setCurrentScenario((prev) => ({ ...prev, nodes: plan.nodes, edges: plan.edges }));
+    setToolMode('select');
   };
 
   const handleDeleteEdge = (id: string) => {
-    setCurrentScenario((prev) => ({
-      ...prev,
-      edges: prev.edges.filter((e) => e.id !== id),
-    }));
-  };
-
-  const handleDeleteAmenity = (id: string) => {
-    setCurrentScenario((prev) => ({
-      ...prev,
-      amenities: prev.amenities.filter((a) => a.id !== id),
-    }));
-  };
-
-  const updateSelectedBuilding = (fields: Partial<Building>) => {
-    if (!selectedBuildingId) return;
-    setCurrentScenario((prev) => ({
-      ...prev,
-      buildings: prev.buildings.map((b) => {
-        if (b.id !== selectedBuildingId) return b;
-        const updated = { ...b, ...fields };
-        if (fields.floors !== undefined || fields.residentsPerFloor !== undefined) {
-          updated.residents = updated.floors * updated.residentsPerFloor;
-        }
-        return updated;
-      }),
+    const edge = currentScenario.edges.find((e) => e.id === id);
+    if (edge && isRingEdge(edge)) {
+      showHint('Элемент кольца: снос запрещён');
+      return;
+    }
+    setCurrentScenario((p) => ({
+      ...p,
+      edges: p.edges.filter((e) => e.id !== id),
     }));
   };
 
@@ -284,8 +337,7 @@ export default function WorkspacePage() {
         setCurrentProjectId(created.id);
       }
       await refreshProjectsList();
-    } catch (e) {
-      setProjectsError(e instanceof Error ? e.message : 'Ошибка сохранения');
+      showHint('Проект успешно сохранён в БД');
     } finally {
       setIsSaving(false);
     }
@@ -301,341 +353,173 @@ export default function WorkspacePage() {
       setProjectName(proj.name);
       setSelectedBuildingId(parsed.buildings[0]?.id ?? null);
       setShowProjectsModal(false);
+      showHint(`Загружен проект: ${proj.name}`);
     } catch {
-      setProjectsError('Не удалось открыть проект');
+      showHint('Ошибка загрузки проекта');
     }
   };
 
   if (!ready || !token) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center px-6 py-6">
-        <p className="text-center font-mono text-sm text-gray-400">Инициализация...</p>
+        <p className="text-center font-medium text-sm text-gray-500">Инициализация…</p>
       </main>
     );
   }
 
   return (
-    <div className="relative min-h-screen bg-[#0e121a] text-gray-200">
-      <AppHeader />
+    <div
+      className="relative min-h-screen bg-cover bg-center text-gray-800 dark:text-gray-100"
+      style={{ backgroundImage: "url('/city.png')" }}
+    >
+      {/* Общая вуаль Liquid Glass */}
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40 dark:from-black/60 dark:via-black/40 dark:to-black/70"
+      />
 
-      <main className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6">
-        {/* Инженерная верхняя командная строка */}
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 bg-[#161c26] p-2.5">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-gray-400">ПРОЕКТ:</span>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              className="rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-xs font-bold text-gray-100 outline-none focus:border-blue-500"
-            />
-            <span className="font-mono text-xs text-gray-500">
-              [{currentScenario.buildings.length} домов | {currentScenario.edges.length} связей]
-            </span>
-          </div>
+      <div className="relative z-10 flex min-h-screen flex-col pb-8">
+        <AppHeader />
 
-          <div className="flex flex-wrap items-center gap-2">
+        <main className="mx-auto w-full max-w-7xl px-3 pt-3 sm:px-6">
+          <DistrictToolbar
+            projectName={projectName}
+            onProjectNameChange={setProjectName}
+            buildingCount={currentScenario.buildings.length}
+            edgeCount={currentScenario.edges.length}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            toolMode={toolMode}
+            onToolModeChange={setToolMode}
+            onLoadPreset={() => {
+              setCurrentScenario(OBNINSK_MARX_DISTRICT);
+              setBaseScenario(OBNINSK_MARX_DISTRICT);
+              setCurrentProjectId(null);
+              setProjectName('51-й микрорайон (Обнинск)');
+              showHint('Загружен мастер-план Обнинска');
+            }}
+            onClear={() => {
+              setCurrentScenario(EMPTY_DISTRICT);
+              setBaseScenario(EMPTY_DISTRICT);
+              setCurrentProjectId(null);
+              setProjectName('Новый чертёж');
+              showHint('Холст очищен');
+            }}
+            onOpenProjects={() => setShowProjectsModal(true)}
+            onSaveProject={handleSaveProject}
+            isSaving={isSaving}
+            simPlaying={simPlaying}
+            onToggleSimPlaying={() => setSimPlaying((p) => !p)}
+            simSpeed={simSpeed}
+            onSimSpeedChange={setSimSpeed}
+          />
+
+          {/* Мобильный сегментированный контрол (только для малых экранов) */}
+          <div className="mb-3 flex rounded-full border border-white/60 bg-white/40 p-1 backdrop-blur-xl lg:hidden dark:border-white/20 dark:bg-white/10">
             <button
               type="button"
-              onClick={() => {
-                setCurrentScenario(OBNINSK_MARX_DISTRICT);
-                setBaseScenario(OBNINSK_MARX_DISTRICT);
-                setCurrentProjectId(null);
-                setProjectName('51-й микрорайон (Обнинск)');
-              }}
-              className={cadBtn}
+              onClick={() => setMobileTab('canvas')}
+              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
+                mobileTab === 'canvas'
+                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
+                  : 'text-gray-600 dark:text-gray-300'
+              }`}
             >
-              Загрузить Обнинск-51
+              {viewMode === '2d' ? '2D Чертёж' : '3D Модель'}
             </button>
             <button
               type="button"
-              onClick={() => {
-                setCurrentScenario(EMPTY_DISTRICT);
-                setBaseScenario(EMPTY_DISTRICT);
-                setCurrentProjectId(null);
-                setProjectName('Новый пустой чертёж');
-              }}
-              className={cadBtn}
+              onClick={() => setMobileTab('inspector')}
+              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
+                mobileTab === 'inspector'
+                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
+                  : 'text-gray-600 dark:text-gray-300'
+              }`}
             >
-              Очистить чертёж
-            </button>
-            <button type="button" onClick={() => setShowProjectsModal(true)} className={cadBtn}>
-              Проекты БД
-            </button>
-            <button type="button" onClick={handleSaveProject} disabled={isSaving} className={cadBtnActive}>
-              {isSaving ? 'Запись...' : 'Сохранить'}
+              Аудит и метрики
             </button>
           </div>
-        </div>
 
-        {/* Панель инструментов CAD */}
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 bg-[#161c26] px-3 py-2">
-          {viewMode === '2d' ? (
-            <div className="flex flex-wrap items-center gap-1 font-mono text-xs">
-              <span className="mr-2 text-gray-400">ИНСТРУМЕНТЫ:</span>
-              <button type="button" onClick={() => setToolMode('select')} className={toolMode === 'select' ? cadBtnActive : cadBtn}>
-                ВЫБОР
-              </button>
-              <button type="button" onClick={() => setToolMode('road')} className={toolMode === 'road' ? cadBtnActive : cadBtn}>
-                АВТОДОРОГА
-              </button>
-              <button type="button" onClick={() => setToolMode('sidewalk')} className={toolMode === 'sidewalk' ? cadBtnActive : cadBtn}>
-                ТРОТУАР
-              </button>
-              <button type="button" onClick={() => setToolMode('crossing')} className={toolMode === 'crossing' ? cadBtnActive : cadBtn} title="Кликните по автодороге для создания перехода">
-                ПЕРЕХОД [1-КЛИК]
-              </button>
-              <button type="button" onClick={() => setToolMode('block')} className={toolMode === 'block' ? cadBtnActive : cadBtn} title="Клик по пути для блокировки/ремонта">
-                ПЕРЕКРЫТЬ
-              </button>
-              <button type="button" onClick={() => setToolMode('building')} className={toolMode === 'building' ? cadBtnActive : cadBtn}>
-                КОРПУС
-              </button>
-              <button type="button" onClick={() => setToolMode('bus_stop')} className={toolMode === 'bus_stop' ? cadBtnActive : cadBtn}>
-                ОСТАНОВКА
-              </button>
-              <button type="button" onClick={() => setToolMode('park')} className={toolMode === 'park' ? cadBtnActive : cadBtn}>
-                СКВЕР
-              </button>
-              <button type="button" onClick={() => setToolMode('delete')} className={toolMode === 'delete' ? cadBtnActive : cadBtn}>
-                СНОС
-              </button>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-              <span className="text-gray-400">СИМУЛЯЦИЯ:</span>
-              <button type="button" onClick={() => setSimPlaying((p) => !p)} className={simPlaying ? cadBtn : cadBtnActive}>
-                {simPlaying ? 'ПАУЗА' : 'СТАРТ'}
-              </button>
-              <div className="flex gap-1">
-                {([1, 2, 5] as const).map((s) => (
-                  <button key={s} type="button" onClick={() => setSimSpeed(s)} className={simSpeed === s ? cadBtnActive : cadBtn}>
-                    {s}X
-                  </button>
-                ))}
-              </div>
-              <span className="text-emerald-400">Трафик Обнинска активен</span>
-            </div>
-          )}
-
-          {/* Переключатель 2D / 3D */}
-          <div className="flex gap-1 font-mono text-xs">
-            <button type="button" onClick={() => setViewMode('2d')} className={viewMode === '2d' ? cadBtnActive : cadBtn}>
-              2D ЧЕРТЁЖ
-            </button>
-            <button type="button" onClick={() => setViewMode('3d')} className={viewMode === '3d' ? cadBtnActive : cadBtn}>
-              3D СИМУЛЯЦИЯ
-            </button>
-          </div>
-        </div>
-
-        {/* Рабочее поле и инспектор параметров */}
-        <div className="grid gap-4 lg:grid-cols-12">
-          <div className="space-y-4 lg:col-span-8">
-            {viewMode === '2d' ? (
-              <DistrictMap
-                scenario={currentScenario}
-                selectedBuildingId={selectedBuildingId}
-                onSelectBuilding={setSelectedBuildingId}
-                activePathNodeIds={activePathNodeIds}
-                toolMode={toolMode}
-                onAddRoad={handleAddRoad}
-                onAddBuilding={handleAddBuilding}
-                onAddAmenity={handleAddAmenity}
-                onAddCrossingDirect={handleAddCrossingDirect}
-                onToggleBlockEdge={handleToggleBlockEdge}
-                onDeleteBuilding={handleDeleteBuilding}
-                onDeleteEdge={handleDeleteEdge}
-                onDeleteAmenity={handleDeleteAmenity}
-              />
-            ) : (
-              <DistrictMap3D
-                scenario={currentScenario}
-                selectedBuildingId={selectedBuildingId}
-                onSelectBuilding={(id: string) => setSelectedBuildingId(id)}
-                activePathNodeIds={activePathNodeIds}
-                simPlaying={simPlaying}
-                simSpeed={simSpeed}
-              />
-            )}
-          </div>
-
-          {/* Правая панель свойств */}
-          <div className="space-y-4 lg:col-span-4">
-            {selectedBuilding ? (
-              <div className="rounded-xl border border-gray-700 bg-[#161c26] p-4 font-mono">
-                <h3 className="border-b border-gray-700 pb-2 text-xs font-bold uppercase text-blue-400">
-                  ПАРАМЕТРЫ ОБЪЕКТА: {selectedBuilding.name}
-                </h3>
-                <div className="mt-3 space-y-3 text-xs">
-                  <div>
-                    <label className="text-gray-400">ИМЕНОВАНИЕ:</label>
-                    <input
-                      type="text"
-                      value={selectedBuilding.name}
-                      onChange={(e) => updateSelectedBuilding({ name: e.target.value })}
-                      className="mt-1 w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 text-gray-100"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">ЭТАЖНОСТЬ:</span>
-                      <span className="font-bold text-gray-100">{selectedBuilding.floors} ЭТ.</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={1}
-                      max={35}
-                      value={selectedBuilding.floors}
-                      onChange={(e) => updateSelectedBuilding({ floors: Number(e.target.value) })}
-                      className="mt-1 w-full accent-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">ЖИТЕЛЕЙ НА ЭТАЖ:</span>
-                      <span className="font-bold text-gray-100">{selectedBuilding.residentsPerFloor} ЧЕЛ.</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={4}
-                      max={60}
-                      value={selectedBuilding.residentsPerFloor}
-                      onChange={(e) => updateSelectedBuilding({ residentsPerFloor: Number(e.target.value) })}
-                      className="mt-1 w-full accent-blue-500"
-                    />
-                  </div>
-                  <div className="rounded border border-blue-900 bg-blue-950/40 p-2.5 text-xs text-blue-300">
-                    <div>НАСЕЛЕНИЕ КОРПУСА: <b>{selectedBuilding.residents}</b> чел.</div>
-                    {activePath && (
-                      <div className="mt-1">
-                        КРАТЧАЙШИЙ ПУТЬ К ТРАНСПОРТУ: <b>{activePath.distanceM} м</b> (~{activePath.timeMinutes} мин)
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-gray-800 bg-[#141822] p-4 text-center font-mono text-xs text-gray-500">
-                ВЫБЕРИТЕ ОБЪЕКТ НА ЧЕРТЕЖЕ ДЛЯ РЕДАКТИРОВАНИЯ
-              </div>
-            )}
-
-            {/* Аудит последствий решений «Было → Стало» */}
-            <div className="rounded-xl border border-gray-700 bg-[#161c26] p-4 font-mono">
-              <div className="flex items-center justify-between border-b border-gray-700 pb-2">
-                <h3 className="text-xs font-bold uppercase text-gray-100">
-                  АУДИТ РЕШЕНИЙ (ДЕЙКСТРА)
-                </h3>
-                <span className="text-[10px] text-gray-400">БЫЛО → СТАЛО</span>
-              </div>
-
-              <div className="mt-3 space-y-2.5 text-xs">
-                {/* Метрика 1 */}
-                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
-                  <div className="flex items-center justify-between text-gray-400">
-                    <span>СРЕДНИЙ ПУТЬ ДО ОСТАНОВКИ</span>
-                    <span className={busDelta <= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                      {busDelta <= 0 ? `▼ ${Math.abs(busDelta)} м` : `▲ +${busDelta} м`}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-baseline gap-2">
-                    <span className="text-xl font-bold text-gray-100">{metrics.weightedAvgBusDistM} м</span>
-                    <span className="text-xs text-gray-500 line-through">{baseMetrics.weightedAvgBusDistM} м</span>
-                  </div>
-                </div>
-
-                {/* Метрика 2 */}
-                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
-                  <div className="flex items-center justify-between text-gray-400">
-                    <span>ДОСТУПНОСТЬ ПАРКОВ (≤350М)</span>
-                    <span className={parkDelta >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
-                      {parkDelta >= 0 ? `▲ +${parkDelta}%` : `▼ ${parkDelta}%`}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex items-baseline gap-2">
-                    <span className="text-xl font-bold text-gray-100">{metrics.parkAccessPercent}%</span>
-                    <span className="text-xs text-gray-500 line-through">{baseMetrics.parkAccessPercent}%</span>
-                  </div>
-                </div>
-
-                {/* Метрика 3 (МГН) */}
-                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
-                  <div className="flex items-center justify-between text-gray-400">
-                    <span>ДОСТУПНОСТЬ ДЛЯ МГН (КОЛЯСКИ)</span>
-                    <span className="font-bold text-blue-400">{metrics.mobilityIndex}%</span>
-                  </div>
-                  <div className="mt-1 text-[11px] text-gray-500">
-                    Безбарьерные маршруты к узловым точкам
-                  </div>
-                </div>
-
-                {/* Бюджет */}
-                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
-                  <div className="flex items-center justify-between text-gray-400">
-                    <span>ЗАТРАТЫ БЛАГОУСТРОЙСТВА:</span>
-                    <span className="font-bold text-gray-100">{metrics.budgetSpentRub.toLocaleString('ru-RU')} ₽</span>
-                  </div>
-                  <p className="mt-1 text-[10px] text-gray-500">
-                    Лимит инвестиций: {metrics.budgetLimitRub.toLocaleString('ru-RU')} ₽
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* Модалка проектов */}
-      {showProjectsModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 font-mono"
-          onClick={() => setShowProjectsModal(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-sm font-bold uppercase text-gray-100">СОХРАНЁННЫЕ ПРОЕКТЫ В POSTGRES</h2>
-            <div className="mt-4 max-h-60 space-y-2 overflow-y-auto">
-              {projectsList.length === 0 ? (
-                <p className="text-xs text-gray-500">Проектов нет. Нажмите «Сохранить».</p>
+          {/* Основная рабочая область: 12-колоночный грид с адаптивным отображением */}
+          <div className="grid gap-4 lg:grid-cols-12">
+            <div className={`space-y-4 lg:col-span-8 ${mobileTab === 'inspector' ? 'hidden lg:block' : 'block'}`}>
+              {viewMode === '2d' ? (
+                <DistrictMap
+                  scenario={currentScenario}
+                  selectedBuildingId={selectedBuildingId}
+                  selectedEdgeId={selectedEdgeId}
+                  onSelectBuilding={setSelectedBuildingId}
+                  onSelectEdge={setSelectedEdgeId}
+                  activePathNodeIds={activePathNodeIds}
+                  edgeLoads={metrics.edgeLoads}
+                  toolMode={toolMode}
+                  onAddRoad={handleAddRoad}
+                  onAddPolyBuilding={handleAddPolyBuilding}
+                  onAddPolyPark={handleAddPolyPark}
+                  onAddCrossingDirect={handleAddCrossingDirect}
+                  onSplitAndBlockSpot={handleSplitAndBlockSpot}
+                  onUpgradeLanes={handleUpgradeLanes}
+                  onToggleSidewalk={handleToggleSidewalk}
+                  onMakeRoundabout={handleMakeRoundabout}
+                  onDeleteBuilding={(id) =>
+                    setCurrentScenario((p) => ({
+                      ...p,
+                      buildings: p.buildings.filter((b) => b.id !== id),
+                    }))
+                  }
+                  onDeleteEdge={handleDeleteEdge}
+                  onDeleteAmenity={(id) =>
+                    setCurrentScenario((p) => ({
+                      ...p,
+                      amenities: p.amenities.filter((a) => a.id !== id),
+                    }))
+                  }
+                />
               ) : (
-                projectsList.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded border border-gray-800 p-2.5 hover:bg-gray-800/50">
-                    <div>
-                      <h4 className="text-xs font-bold text-gray-200">{p.name}</h4>
-                      <p className="text-[10px] text-gray-500">{new Date(p.updatedAt).toLocaleDateString('ru-RU')}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button type="button" onClick={() => handleLoadProject(p.id)} className={cadBtnActive}>
-                        ОТКРЫТЬ
-                      </button>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (token) {
-                            await deleteProject(token, p.id);
-                            await refreshProjectsList();
-                          }
-                        }}
-                        className="text-xs text-rose-400 hover:underline"
-                      >
-                        УДАЛИТЬ
-                      </button>
-                    </div>
-                  </div>
-                ))
+                <DistrictMap3D
+                  scenario={currentScenario}
+                  selectedBuildingId={selectedBuildingId}
+                  onSelectBuilding={(id) => setSelectedBuildingId(id)}
+                  activePathNodeIds={activePathNodeIds}
+                  edgeLoads={metrics.edgeLoads}
+                  busPaths={metrics.busPaths}
+                  parkPaths={metrics.parkPaths}
+                  simPlaying={simPlaying}
+                  simSpeed={simSpeed}
+                />
               )}
             </div>
-            <div className="mt-4 flex justify-end">
-              <button type="button" onClick={() => setShowProjectsModal(false)} className={cadBtn}>
-                ЗАКРЫТЬ
-              </button>
+
+            <div className={`lg:col-span-4 ${mobileTab === 'canvas' ? 'hidden lg:block' : 'block'}`}>
+              <DistrictSidebar
+                selectedBuilding={selectedBuilding}
+                selectedEdge={selectedEdge}
+                activePath={activePath}
+                metrics={metrics}
+                baseMetrics={baseMetrics}
+              />
             </div>
           </div>
-        </div>
-      )}
+        </main>
+
+        <ProjectsModal
+          isOpen={showProjectsModal}
+          onClose={() => setShowProjectsModal(false)}
+          projects={projectsList}
+          onSelectProject={handleLoadProject}
+        />
+
+        {/* Стеклянный тост подсказок и инженерных предупреждений */}
+        {hint && (
+          <div
+            key={hint.id}
+            className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 transform-gpu rounded-full border border-white/60 bg-white/70 px-5 py-2 text-center text-xs font-semibold text-gray-800 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_12px_32px_-8px_rgba(20,26,38,0.45)] backdrop-blur-2xl transition-all dark:border-white/20 dark:bg-gray-900/85 dark:text-gray-100"
+            role="status"
+          >
+            {hint.text}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
