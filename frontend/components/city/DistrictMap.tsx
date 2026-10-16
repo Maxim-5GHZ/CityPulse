@@ -2,57 +2,114 @@
 
 import { useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { DistrictScenario, GraphNode, GraphEdge, Building } from '@/lib/city-engine/types';
+import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
+import DistrictContextMenu from './DistrictContextMenu';
 
 export type ToolMode =
   | 'select'
   | 'road'
   | 'sidewalk'
   | 'crossing'
-  | 'building'
-  | 'bus_stop'
-  | 'park'
-  | 'block'
+  | 'underpass'
+  | 'poly_building'
+  | 'poly_park'
+  | 'block_spot'
   | 'delete';
 
 interface DistrictMapProps {
   scenario: DistrictScenario;
   selectedBuildingId: string | null;
+  selectedEdgeId: string | null;
   onSelectBuilding: (buildingId: string | null) => void;
+  onSelectEdge: (edgeId: string | null) => void;
   activePathNodeIds: string[];
+  edgeLoads: Record<string, number>;
   toolMode: ToolMode;
   onAddRoad: (x1: number, y1: number, x2: number, y2: number, type?: 'road' | 'sidewalk' | 'crossing') => void;
-  onAddBuilding: (x: number, y: number) => void;
-  onAddAmenity: (type: 'bus_stop' | 'park', x: number, y: number) => void;
-  onAddCrossingDirect: (edgeId: string, px: number, py: number) => void;
-  onToggleBlockEdge: (id: string) => void;
+  onAddPolyBuilding: (points: { x: number; y: number }[]) => void;
+  onAddPolyPark: (points: { x: number; y: number }[]) => void;
+  onAddCrossingDirect: (edgeId: string, px: number, py: number, isUnderpass?: boolean) => void;
+  onSplitAndBlockSpot: (edgeId: string, px: number, py: number) => void;
+  onUpgradeLanes: (edgeId: string) => void;
+  onToggleSidewalk: (edgeId: string, side: 'left' | 'right') => void;
+  onMakeRoundabout: (nodeId: string) => void;
   onDeleteBuilding: (id: string) => void;
   onDeleteEdge: (id: string) => void;
   onDeleteAmenity: (id: string) => void;
 }
 
+// Половина ширины полотна по числу полос (для подложек стыков).
+const halfWidth = (edge: GraphEdge): number => (edge.lanes === 4 ? 17 : 11);
+
+// Палитра полотна: асфальт заметно светлее фона (#141822), бордюр — темнее асфальта.
+const ROAD_ASPHALT = '#2f3b52';
+const ROAD_CASING = '#0d1219';
+const RING_ISLAND = '#1c2433';
+
 export default function DistrictMap({
   scenario,
   selectedBuildingId,
+  selectedEdgeId,
   onSelectBuilding,
+  onSelectEdge,
   activePathNodeIds,
+  edgeLoads,
   toolMode,
   onAddRoad,
-  onAddBuilding,
-  onAddAmenity,
+  onAddPolyBuilding,
+  onAddPolyPark,
   onAddCrossingDirect,
-  onToggleBlockEdge,
+  onSplitAndBlockSpot,
+  onUpgradeLanes,
+  onToggleSidewalk,
+  onMakeRoundabout,
   onDeleteBuilding,
   onDeleteEdge,
   onDeleteAmenity,
 }: DistrictMapProps) {
   const [roadStart, setRoadStart] = useState<{ x: number; y: number } | null>(null);
+  const [polygonDraft, setPolygonDraft] = useState<{ x: number; y: number }[]>([]);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
 
   const nodeMap = new Map<string, GraphNode>(scenario.nodes.map((n) => [n.id, n]));
+  const roadEdges = scenario.edges.filter((e) => e.type === 'road');
+
+  // Радиус подложки стыка: половина ширины самой широкой примыкающей дороги.
+  // Ставится только там, где сходятся ≥2 дорог, — на прямых участках швов нет.
+  const padRadius = (nodeId: string): number => {
+    const adj = roadEdges.filter(
+      (e) => e.isActive && (e.from === nodeId || e.to === nodeId),
+    );
+    if (adj.length < 2) return 0;
+    return Math.max(...adj.map(halfWidth));
+  };
+
+  // Обрезка концов отрезка на t1/t2 (подложки узлов), чтобы швы ушли под круги.
+  const trim = (
+    u: GraphNode,
+    v: GraphNode,
+  ): { x1: number; y1: number; x2: number; y2: number } | null => {
+    const dx = v.x - u.x;
+    const dy = v.y - u.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) return null;
+    const t1 = Math.min(padRadius(u.id), len / 2 - 1);
+    const t2 = Math.min(padRadius(v.id), len / 2 - 1);
+    if (t1 + t2 >= len - 1) return null;
+    const ux = dx / len;
+    const uy = dy / len;
+    return {
+      x1: u.x + ux * Math.max(0, t1),
+      y1: u.y + uy * Math.max(0, t1),
+      x2: v.x - ux * Math.max(0, t2),
+      y2: v.y - uy * Math.max(0, t2),
+    };
+  };
 
   const snapToNode = (x: number, y: number): { x: number; y: number } => {
     for (const node of scenario.nodes) {
-      if (Math.hypot(node.x - x, node.y - y) <= 22) {
+      if (Math.hypot(node.x - x, node.y - y) <= 16) {
         return { x: node.x, y: node.y };
       }
     }
@@ -67,12 +124,11 @@ export default function DistrictMap({
     return snapToNode(x, y);
   };
 
-  const isLinearTool = toolMode === 'road' || toolMode === 'sidewalk';
-
   const handleSvgClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (contextMenu) setContextMenu(null);
     const coords = getSvgCoordinates(e);
 
-    if (isLinearTool) {
+    if (toolMode === 'road' || toolMode === 'sidewalk') {
       if (!roadStart) {
         setRoadStart(coords);
       } else {
@@ -81,20 +137,54 @@ export default function DistrictMap({
         }
         setRoadStart(null);
       }
-    } else if (toolMode === 'building') {
-      onAddBuilding(coords.x - 42, coords.y - 25);
-    } else if (toolMode === 'bus_stop') {
-      onAddAmenity('bus_stop', coords.x, coords.y);
-    } else if (toolMode === 'park') {
-      onAddAmenity('park', coords.x, coords.y);
+    } else if (toolMode === 'poly_building' || toolMode === 'poly_park') {
+      if (polygonDraft.length >= 3) {
+        const first = polygonDraft[0];
+        if (Math.hypot(first.x - coords.x, first.y - coords.y) <= 22) {
+          if (toolMode === 'poly_building') onAddPolyBuilding(polygonDraft);
+          else onAddPolyPark(polygonDraft);
+          setPolygonDraft([]);
+          return;
+        }
+      }
+      setPolygonDraft((prev) => [...prev, coords]);
     } else if (toolMode === 'select') {
       onSelectBuilding(null);
+      onSelectEdge(null);
     }
   };
 
-  const handleMouseMove = (e: ReactMouseEvent<SVGSVGElement>) => {
-    const coords = getSvgCoordinates(e);
-    setMousePos(coords);
+  const handleContextMenu = (e: ReactMouseEvent, edgeId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, edgeId });
+    onSelectEdge(edgeId);
+  };
+
+  const handleEdgeClick = (
+    e: ReactMouseEvent,
+    edge: GraphEdge,
+    from: GraphNode,
+    to: GraphNode,
+  ) => {
+    const isCarRoad = edge.type === 'road';
+    if (toolMode === 'block_spot') {
+      e.stopPropagation();
+      onSplitAndBlockSpot(edge.id, Math.round(mousePos?.x ?? 0), Math.round(mousePos?.y ?? 0));
+    } else if (toolMode === 'crossing' && isCarRoad) {
+      e.stopPropagation();
+      onAddCrossingDirect(edge.id, (from.x + to.x) / 2, (from.y + to.y) / 2, false);
+    } else if (toolMode === 'underpass' && isCarRoad) {
+      e.stopPropagation();
+      onAddCrossingDirect(edge.id, (from.x + to.x) / 2, (from.y + to.y) / 2, true);
+    } else if (toolMode === 'delete') {
+      e.stopPropagation();
+      onDeleteEdge(edge.id);
+    } else if (toolMode === 'select') {
+      e.stopPropagation();
+      onSelectEdge(edge.id);
+      onSelectBuilding(null);
+    }
   };
 
   const isSegmentActive = (u: string, v: string) => {
@@ -103,27 +193,34 @@ export default function DistrictMap({
     return idxU !== -1 && idxV !== -1 && Math.abs(idxU - idxV) === 1;
   };
 
+  const roundaboutCenters = scenario.nodes.filter((n) => n.type === 'roundabout');
+  const menuEdge = contextMenu ? scenario.edges.find((e) => e.id === contextMenu.edgeId) : undefined;
+  const menuEdgeNodes =
+    menuEdge && nodeMap.get(menuEdge.from) && nodeMap.get(menuEdge.to)
+      ? { from: nodeMap.get(menuEdge.from)!, to: nodeMap.get(menuEdge.to)! }
+      : null;
+
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-gray-300 bg-[#1e2430] shadow-md dark:border-gray-700">
-      {/* Статусная панель САПР сверху */}
+    <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-[#1e2430] shadow-xl">
       <div className="flex h-8 items-center justify-between border-b border-gray-700/80 bg-[#161a22] px-3 font-mono text-[11px] text-gray-300 select-none">
         <div className="flex items-center gap-4">
-          <span className="text-gray-400">САПР-СЕТКА: 10px</span>
+          <span className="text-gray-400">МАСШТАБ: 1ед = 1м</span>
           <span className="text-blue-400 font-semibold uppercase">
             РЕЖИМ: {
-              toolMode === 'select' ? 'ВЫБОР ОБЪЕКТА [ESC]' :
-              toolMode === 'road' ? 'ТРАССИРОВКА АВТОДОРОГИ' :
-              toolMode === 'sidewalk' ? 'УКЛАДКА ТРОТУАРА С БОРДЮРОМ' :
-              toolMode === 'crossing' ? 'ПЕРЕХОД В 1 КЛИК ПО ДОРОГЕ' :
-              toolMode === 'block' ? 'ПЕРЕКРЫТИЕ / РЕМОНТ ПУТИ' :
-              toolMode === 'building' ? 'РАЗМЕЩЕНИЕ ЗДАНИЯ' :
-              toolMode === 'bus_stop' ? 'УСТАНОВКА ПАВИЛЬОНА ОСТАНОВКИ' :
-              toolMode === 'park' ? 'РАЗБИВКА СКВЕРА' : 'ДЕМОНТАЖ ОБЪЕКТА'
+              toolMode === 'select' ? 'ВЫБОР (ПКМ — МЕНЮ • КЛИК ПО УЗЛУ — КОЛЬЦО)' :
+              toolMode === 'road' ? 'ТРАССИРОВКА УДС' :
+              toolMode === 'sidewalk' ? 'ТРОТУАР' :
+              toolMode === 'crossing' ? 'НАЗЕМНЫЙ ПЕРЕХОД' :
+              toolMode === 'underpass' ? 'ПОДЗЕМНЫЙ ПЕРЕХОД (НЕ МГН)' :
+              toolMode === 'poly_building' ? `КОНТУР ЗДАНИЯ (${polygonDraft.length} ТОЧЕК)` :
+              toolMode === 'poly_park' ? `КОНТУР СКВЕРА (${polygonDraft.length} ТОЧЕК)` :
+              toolMode === 'block_spot' ? 'ЛОКАЛЬНЫЙ РЕМОНТ' : 'СНОС'
             }
           </span>
         </div>
         <div>
-          X: <span className="text-emerald-400">{mousePos?.x ?? 0}</span> | Y: <span className="text-emerald-400">{mousePos?.y ?? 0}</span>
+          X: <span className="text-emerald-400">{mousePos?.x ?? 0}м</span> | Y:{' '}
+          <span className="text-emerald-400">{mousePos?.y ?? 0}м</span>
         </div>
       </div>
 
@@ -132,23 +229,17 @@ export default function DistrictMap({
         className="h-auto w-full cursor-crosshair select-none"
         style={{ minHeight: '520px' }}
         onClick={handleSvgClick}
-        onMouseMove={handleMouseMove}
+        onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
         role="img"
-        aria-label="САПР чертёж городского района"
+        aria-label="САПР чертёж района"
       >
         <defs>
-          {/* Инженерная координатная сетка */}
           <pattern id="cad-grid-sm" width="20" height="20" patternUnits="userSpaceOnUse">
             <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#2a3242" strokeWidth="0.5" />
           </pattern>
           <pattern id="cad-grid-lg" width="100" height="100" patternUnits="userSpaceOnUse">
             <rect width="100" height="100" fill="url(#cad-grid-sm)" />
             <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#374358" strokeWidth="1" />
-          </pattern>
-          {/* Штриховка ремонтной блокировки */}
-          <pattern id="blocked-pattern" width="16" height="16" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
-            <rect width="8" height="16" fill="#dc2626" />
-            <rect x="8" width="8" height="16" fill="#fef2f2" />
           </pattern>
         </defs>
 
@@ -160,233 +251,387 @@ export default function DistrictMap({
           .filter((a) => a.type === 'park')
           .map((park) => {
             const node = nodeMap.get(park.nodeId);
+            if (park.polygon && park.polygon.length >= 3) {
+              const pts = park.polygon.map((p) => `${p.x},${p.y}`).join(' ');
+              return (
+                <g key={park.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(park.id)}>
+                  <polygon points={pts} fill="#143828" stroke="#2d6a4f" strokeWidth="2" strokeDasharray="4 2" />
+                  <text x={park.polygon[0].x} y={park.polygon[0].y + 14} fill="#a7f3d0" fontSize="9" fontFamily="monospace">
+                    {park.name}
+                  </text>
+                </g>
+              );
+            }
             if (!node) return null;
             return (
-              <g
-                key={park.id}
-                className="cursor-pointer"
-                onClick={(e) => {
-                  if (toolMode === 'delete') {
-                    e.stopPropagation();
-                    onDeleteAmenity(park.id);
-                  }
-                }}
-              >
-                <circle cx={node.x} cy={node.y} r="50" fill="#1b3d2f" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
-                <circle cx={node.x - 12} cy={node.y - 10} r="16" fill="#2d6a4f" opacity="0.8" />
-                <circle cx={node.x + 14} cy={node.y + 12} r="18" fill="#1e4d38" opacity="0.8" />
-                <rect x={node.x - 45} y={node.y + 36} width="90" height="16" rx="3" fill="#0b1e16" stroke="#2d6a4f" strokeWidth="1" />
-                <text x={node.x} y={node.y + 48} textAnchor="middle" fill="#a7f3d0" fontSize="9.5" fontFamily="monospace" fontWeight="700">
+              <g key={park.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(park.id)}>
+                <circle cx={node.x} cy={node.y} r="48" fill="#143828" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
+                <text x={node.x} y={node.y + 4} textAnchor="middle" fill="#a7f3d0" fontSize="9" fontFamily="monospace" fontWeight="700">
                   {park.name}
                 </text>
               </g>
             );
           })}
 
-        {/* Дороги, тротуары с бордюрами, переходы */}
-        {scenario.edges.map((edge: GraphEdge) => {
+        {/* Проход 1: окаймления всех дорог (слияние стыков) */}
+        {roadEdges.map((edge) => {
           const from = nodeMap.get(edge.from);
           const to = nodeMap.get(edge.to);
           if (!from || !to) return null;
+          const t = trim(from, to);
+          if (!t) return null;
+          const w = edge.lanes === 4 ? 34 : 22;
+          return (
+            <line
+              key={`casing-${edge.id}`}
+              x1={t.x1}
+              y1={t.y1}
+              x2={t.x2}
+              y2={t.y2}
+              stroke={selectedEdgeId === edge.id ? '#3b82f6' : ROAD_CASING}
+              strokeWidth={w + 6}
+              strokeLinecap="butt"
+            />
+          );
+        })}
 
-          const isCarRoad = edge.type === 'road';
-          const isCrossing = edge.type === 'crossing';
-          const isBlocked = !edge.isActive;
-          const isActiveInPath = isSegmentActive(edge.from, edge.to);
+        {/* Проход 2: полотна дорог */}
+        {roadEdges.map((edge) => {
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          const t = trim(from, to);
+          if (!t) return null;
+          return (
+            <line
+              key={`asphalt-${edge.id}`}
+              x1={t.x1}
+              y1={t.y1}
+              x2={t.x2}
+              y2={t.y2}
+              stroke={ROAD_ASPHALT}
+              strokeWidth={edge.lanes === 4 ? 30 : 18}
+              strokeLinecap="butt"
+            />
+          );
+        })}
 
+        {/* Проход 3: подложки перекрёстков поверх швов */}
+        {scenario.nodes.map((node) => {
+          const r = padRadius(node.id);
+          if (r <= 0) return null;
+          return (
+            <g key={`pad-${node.id}`}>
+              <circle cx={node.x} cy={node.y} r={r + 3} fill={ROAD_CASING} />
+              <circle cx={node.x} cy={node.y} r={r} fill={ROAD_ASPHALT} />
+            </g>
+          );
+        })}
+
+        {/* Проход 4: тротуары вдоль дорог и осевые (обрезаны подложками) */}
+        {roadEdges.map((edge) => {
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          const t = trim(from, to);
+          if (!t) return null;
+          const is4Lanes = edge.lanes === 4;
           const dx = to.x - from.x;
           const dy = to.y - from.y;
           const len = Math.hypot(dx, dy);
           const nx = len > 0 ? -dy / len : 0;
           const ny = len > 0 ? dx / len : 0;
-
+          const off = is4Lanes ? 20 : 14;
           return (
-            <g
-              key={edge.id}
-              className="cursor-pointer"
-              onClick={(e) => {
-                if (toolMode === 'crossing' && isCarRoad) {
-                  e.stopPropagation();
-                  onAddCrossingDirect(edge.id, (from.x + to.x) / 2, (from.y + to.y) / 2);
-                } else if (toolMode === 'block') {
-                  e.stopPropagation();
-                  onToggleBlockEdge(edge.id);
-                } else if (toolMode === 'delete') {
-                  e.stopPropagation();
-                  onDeleteEdge(edge.id);
-                }
-              }}
-            >
-              {/* Проезжая часть автодороги */}
-              {isCarRoad && (
-                <>
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2a3242" strokeWidth={24} strokeLinecap="round" />
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#1b212c" strokeWidth={20} strokeLinecap="round" />
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#64748b" strokeWidth={1.5} strokeDasharray="10 8" />
-                </>
+            <g key={`detail-${edge.id}`}>
+              {edge.hasSidewalkLeft && (
+                <line
+                  x1={t.x1 + nx * off}
+                  y1={t.y1 + ny * off}
+                  x2={t.x2 + nx * off}
+                  y2={t.y2 + ny * off}
+                  stroke="#94a3b8"
+                  strokeWidth={5}
+                  strokeLinecap="butt"
+                />
               )}
-
-              {/* Пешеходный переход */}
-              {isCrossing && (
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#ffffff" strokeWidth={12} strokeDasharray="5 7" strokeLinecap="butt" />
+              {edge.hasSidewalkRight && (
+                <line
+                  x1={t.x1 - nx * off}
+                  y1={t.y1 - ny * off}
+                  x2={t.x2 - nx * off}
+                  y2={t.y2 - ny * off}
+                  stroke="#94a3b8"
+                  strokeWidth={5}
+                  strokeLinecap="butt"
+                />
               )}
-
-              {/* Тротуар с бордюрами */}
-              {!isCarRoad && !isCrossing && (
-                <>
-                  {/* Бордюр слева */}
-                  <line
-                    x1={from.x + nx * 4.5}
-                    y1={from.y + ny * 4.5}
-                    x2={to.x + nx * 4.5}
-                    y2={to.y + ny * 4.5}
-                    stroke="#94a3b8"
-                    strokeWidth={1}
-                  />
-                  {/* Полотно пешеходной дорожки */}
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#475569" strokeWidth={8} strokeLinecap="round" />
-                  {/* Бордюр справа */}
-                  <line
-                    x1={from.x - nx * 4.5}
-                    y1={from.y - ny * 4.5}
-                    x2={to.x - nx * 4.5}
-                    y2={to.y - ny * 4.5}
-                    stroke="#94a3b8"
-                    strokeWidth={1}
-                  />
-                </>
+              {is4Lanes ? (
+                <line x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#f59e0b" strokeWidth={1.5} />
+              ) : (
+                <line x1={t.x1} y1={t.y1} x2={t.x2} y2={t.y2} stroke="#64748b" strokeWidth={1} strokeDasharray="8 6" />
               )}
-
-              {/* Визуализация перекрытия/ремонта */}
-              {isBlocked && (
-                <>
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="url(#blocked-pattern)" strokeWidth={16} strokeLinecap="round" />
-                  <circle cx={(from.x + to.x) / 2} cy={(from.y + to.y) / 2} r="10" fill="#dc2626" stroke="#ffffff" strokeWidth="2" />
-                  <rect x={(from.x + to.x) / 2 - 6} y={(from.y + to.y) / 2 - 2} width="12" height="4" fill="#ffffff" rx="1" />
-                </>
-              )}
-
-              {/* Подсветка маршрута Дейкстры */}
-              {isActiveInPath && !isBlocked && (
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#3b82f6" strokeWidth={4.5} strokeDasharray="6 4" strokeLinecap="round" />
-              )}
-
-              {/* Невидимая полоса для легкого клика */}
-              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth="26" />
             </g>
           );
         })}
 
-        {/* Предпросмотр протяжки дороги/тротуара */}
-        {isLinearTool && roadStart && mousePos && (
-          <line
-            x1={roadStart.x}
-            y1={roadStart.y}
-            x2={mousePos.x}
-            y2={mousePos.y}
-            stroke={toolMode === 'road' ? '#60a5fa' : '#93c5fd'}
-            strokeWidth={toolMode === 'road' ? 18 : 8}
-            strokeDasharray="6 4"
-            strokeLinecap="round"
-          />
+        {/* Кольца поверх стыков: полотно → разметка → островок → зебры съездов */}
+        {roundaboutCenters.map((center) => (
+          <g key={`ring-${center.id}`}>
+            <circle cx={center.x} cy={center.y} r={RING_RADIUS + 15} fill="none" stroke={ROAD_CASING} strokeWidth={30} />
+            <circle cx={center.x} cy={center.y} r={RING_RADIUS} fill="none" stroke={ROAD_ASPHALT} strokeWidth={24} />
+            <circle cx={center.x} cy={center.y} r={RING_RADIUS} fill="none" stroke="#e2e8f0" strokeWidth={1.5} strokeDasharray="6 5" />
+            <circle cx={center.x} cy={center.y} r={RING_RADIUS - 13} fill={RING_ISLAND} stroke="#64748b" strokeWidth={1.5} />
+            <circle cx={center.x} cy={center.y} r={2.5} fill="#64748b" />
+          </g>
+        ))}
+        {scenario.edges.map((edge) => {
+          if (edge.type !== 'road' || isRingEdge(edge)) return null;
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          // Зебра на съезде: ищем конец ребра, лежащий на окружности кольца.
+          const ends = [from, to].map((p) => {
+            const c = roundaboutCenters.find(
+              (cc) => Math.abs(Math.hypot(p.x - cc.x, p.y - cc.y) - RING_RADIUS) < 4,
+            );
+            return c ? { p, c } : null;
+          });
+          const hit = ends[0] ?? ends[1];
+          if (!hit) return null;
+          const other = hit.p === from ? to : from;
+          const dx = other.x - hit.p.x;
+          const dy = other.y - hit.p.y;
+          const len = Math.hypot(dx, dy);
+          if (len < 1) return null;
+          const ux = dx / len;
+          const uy = dy / len;
+          // Полоса зебры на 8 м наружу от съезда, поперёк дороги.
+          const qx = hit.p.x + ux * 8;
+          const qy = hit.p.y + uy * 8;
+          const hw = halfWidth(edge);
+          return (
+            <line
+              key={`zebra-${edge.id}`}
+              x1={qx - uy * hw}
+              y1={qy + ux * hw}
+              x2={qx + uy * hw}
+              y2={qy - ux * hw}
+              stroke="#ffffff"
+              strokeWidth={5}
+              strokeDasharray="3 3"
+            />
+          );
+        })}
+
+        {/* Наземные зебры */}
+        {scenario.edges.map((edge) => {
+          if (edge.type !== 'crossing') return null;
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          return (
+            <line
+              key={edge.id}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke="#ffffff"
+              strokeWidth={12}
+              strokeDasharray="4 5"
+            />
+          );
+        })}
+
+        {/* Подземные переходы */}
+        {scenario.edges.map((edge) => {
+          if (edge.type !== 'underpass') return null;
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          return (
+            <g key={edge.id}>
+              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#1e293b" strokeWidth={12} strokeDasharray="6 4" />
+              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#38bdf8" strokeWidth={2} />
+            </g>
+          );
+        })}
+
+        {/* Тротуары и велодорожки с тепловой картой нагрузки */}
+        {scenario.edges.map((edge) => {
+          if (edge.type === 'road' || edge.type === 'crossing' || edge.type === 'underpass') return null;
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          const load = edgeLoads[edge.id] || 0;
+          let heatColor = '#475569';
+          if (load > 400) heatColor = '#ef4444';
+          else if (load > 200) heatColor = '#f59e0b';
+          else if (load > 50) heatColor = '#3b82f6';
+          return (
+            <line
+              key={edge.id}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+              stroke={heatColor}
+              strokeWidth={6}
+              strokeLinecap="round"
+            />
+          );
+        })}
+
+        {/* Интерактив рёбер: оверлеи + хит-зоны */}
+        {scenario.edges.map((edge) => {
+          const from = nodeMap.get(edge.from);
+          const to = nodeMap.get(edge.to);
+          if (!from || !to) return null;
+          const isBlocked = !edge.isActive;
+          const isActiveInPath = isSegmentActive(edge.from, edge.to);
+          return (
+            <g
+              key={`hit-${edge.id}`}
+              className="cursor-pointer"
+              onContextMenu={(e) => handleContextMenu(e, edge.id)}
+              onClick={(e) => handleEdgeClick(e, edge, from, to)}
+            >
+              {isBlocked && (
+                <circle cx={(from.x + to.x) / 2} cy={(from.y + to.y) / 2} r="8" fill="#dc2626" stroke="#ffffff" strokeWidth="2" />
+              )}
+              {isActiveInPath && !isBlocked && (
+                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#3b82f6" strokeWidth={4} strokeDasharray="5 4" />
+              )}
+              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth={24} />
+            </g>
+          );
+        })}
+
+        {/* Черновой полигон */}
+        {polygonDraft.length > 0 && (
+          <g>
+            <polyline
+              points={[...polygonDraft, mousePos].filter(Boolean).map((p) => `${p!.x},${p!.y}`).join(' ')}
+              fill="none"
+              stroke="#38bdf8"
+              strokeWidth="2"
+              strokeDasharray="4 4"
+            />
+            {polygonDraft.map((pt, i) => (
+              <circle key={i} cx={pt.x} cy={pt.y} r={i === 0 ? 6 : 4} fill={i === 0 ? '#10b981' : '#38bdf8'} />
+            ))}
+          </g>
+        )}
+
+        {/* Линия привязки новой дороги */}
+        {roadStart && mousePos && (
+          <line x1={roadStart.x} y1={roadStart.y} x2={mousePos.x} y2={mousePos.y} stroke="#60a5fa" strokeWidth={14} strokeDasharray="6 4" />
         )}
 
         {/* Дома */}
         {scenario.buildings.map((b: Building) => {
           const isSelected = selectedBuildingId === b.id;
+          if (b.polygon && b.polygon.length >= 3) {
+            const pts = b.polygon.map((p) => `${p.x},${p.y}`).join(' ');
+            return (
+              <g key={b.id} onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}>
+                <polygon points={pts} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth="2" />
+                <text x={b.polygon[0].x + 10} y={b.polygon[0].y + 16} fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
+                  {b.name} ({b.residents} чел)
+                </text>
+              </g>
+            );
+          }
           return (
-            <g
-              key={b.id}
-              className="cursor-pointer"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (toolMode === 'delete') {
-                  onDeleteBuilding(b.id);
-                } else {
-                  onSelectBuilding(b.id);
-                }
-              }}
-            >
-              <rect
-                x={b.x}
-                y={b.y}
-                width={b.width}
-                height={b.height}
-                rx={4}
-                fill={isSelected ? '#1e3a8a' : '#1e293b'}
-                stroke={isSelected ? '#60a5fa' : '#475569'}
-                strokeWidth={isSelected ? 2.5 : 1}
-              />
-              <text
-                x={b.x + b.width / 2}
-                y={b.y + b.height / 2 - 4}
-                textAnchor="middle"
-                fill={isSelected ? '#bfdbfe' : '#f1f5f9'}
-                fontSize="10"
-                fontFamily="monospace"
-                fontWeight="700"
-              >
+            <g key={b.id} onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}>
+              <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={4} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
+              <text x={b.x + b.width / 2} y={b.y + b.height / 2 + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                 {b.name}
-              </text>
-              <text
-                x={b.x + b.width / 2}
-                y={b.y + b.height / 2 + 11}
-                textAnchor="middle"
-                fill="#94a3b8"
-                fontSize="8.5"
-                fontFamily="monospace"
-              >
-                {b.floors} эт • {b.residents} чел
               </text>
             </g>
           );
         })}
 
-        {/* Остановки транспорта */}
-        {scenario.amenities
-          .filter((a) => a.type === 'bus_stop')
-          .map((bus) => {
-            const node = nodeMap.get(bus.nodeId);
-            if (!node) return null;
-            return (
-              <g
-                key={bus.id}
-                className="cursor-pointer"
+        {/* Остановки */}
+        {scenario.amenities.filter((a) => a.type === 'bus_stop').map((bus) => {
+          const n = nodeMap.get(bus.nodeId);
+          if (!n) return null;
+          return (
+            <g key={bus.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(bus.id)}>
+              <circle cx={n.x} cy={n.y} r="11" fill="#2563eb" stroke="#ffffff" strokeWidth="1.5" />
+              <text x={n.x} y={n.y + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
+                А
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Узлы (клик в режиме выбора — построить кольцо) */}
+        {scenario.nodes.map((node) => {
+          const roadCount =
+            toolMode === 'select' && node.type !== 'roundabout' && !node.isRoundabout
+              ? scenario.edges.filter(
+                  (e) =>
+                    e.type === 'road' &&
+                    e.isActive &&
+                    !e.isRoundabout &&
+                    (e.from === node.id || e.to === node.id),
+                ).length
+              : 0;
+          const canRing = roadCount >= 3;
+          return (
+            <g key={node.id}>
+              {canRing && (
+                <circle
+                  cx={node.x}
+                  cy={node.y}
+                  r={10}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+              )}
+              <circle
+                cx={node.x}
+                cy={node.y}
+                r={node.type === 'roundabout' ? 14 : node.isRoundabout ? 2.5 : 3}
+                fill={node.type === 'roundabout' ? '#1e3a8a' : canRing ? '#f59e0b' : '#64748b'}
                 onClick={(e) => {
-                  if (toolMode === 'delete') {
-                    e.stopPropagation();
-                    onDeleteAmenity(bus.id);
-                  }
+                  if (toolMode !== 'select') return;
+                  e.stopPropagation();
+                  onMakeRoundabout(node.id);
                 }}
               >
-                <circle cx={node.x} cy={node.y} r="12" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
-                <text x={node.x} y={node.y + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9.5" fontFamily="monospace" fontWeight="900">
-                  А
-                </text>
-                <rect x={node.x - 30} y={node.y + 16} width="60" height="14" rx="2" fill="#0f172a" stroke="#3b82f6" strokeWidth="0.8" />
-                <text x={node.x} y={node.y + 26} textAnchor="middle" fill="#93c5fd" fontSize="8" fontFamily="monospace">
-                  ОСТАНОВКА
-                </text>
-              </g>
-            );
-          })}
-
-        {/* Узлы графа */}
-        {scenario.nodes.map((node) => {
-          const isSelectedPath = activePathNodeIds.includes(node.id);
-          return (
-            <circle
-              key={node.id}
-              cx={node.x}
-              cy={node.y}
-              r={isSelectedPath ? 5 : 3}
-              fill={isSelectedPath ? '#3b82f6' : '#64748b'}
-              stroke="#0f172a"
-              strokeWidth={1}
-            />
+                {canRing && <title>Клик — построить кольцо</title>}
+              </circle>
+            </g>
           );
         })}
       </svg>
+
+      {contextMenu && menuEdge && menuEdgeNodes && (
+        <DistrictContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          edgeId={contextMenu.edgeId}
+          lanesLabel={menuEdge.type === 'road' ? `${menuEdge.lanes ?? 2}` : '—'}
+          isRing={isRingEdge(menuEdge)}
+          onUpgradeLanes={onUpgradeLanes}
+          onToggleSidewalk={onToggleSidewalk}
+          onDeleteEdge={onDeleteEdge}
+          onBuildCrossing={(isUnderpass) => {
+            onAddCrossingDirect(
+              menuEdge.id,
+              Math.round((menuEdgeNodes.from.x + menuEdgeNodes.to.x) / 2),
+              Math.round((menuEdgeNodes.from.y + menuEdgeNodes.to.y) / 2),
+              isUnderpass,
+            );
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
