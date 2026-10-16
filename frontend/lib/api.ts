@@ -87,3 +87,48 @@ export function exchangeFlida(flidaAccessToken: string): Promise<{ token: string
     body: { access_token: flidaAccessToken },
   });
 }
+
+// Кейс 03: проекты конструктора (владелец — из JWT, см. ScenarioController).
+export interface ScenarioRow {
+  id: string;
+  name: string;
+  updatedAt: string;
+}
+
+export interface ScenarioDetail {
+  id: string;
+  name: string;
+  graph: unknown;
+  hash: string;
+  updatedAt: string;
+}
+
+export function listScenarios(token: string): Promise<ScenarioRow[]> {
+  return req<ScenarioRow[]>('/scenarios', token);
+}
+
+export function createScenario(token: string, name: string, graph: unknown): Promise<ScenarioDetail> {
+  return req<ScenarioDetail>('/scenarios', token, {
+    method: 'POST',
+    body: { name, graph },
+  });
+}
+
+export function getScenario(token: string, id: string): Promise<ScenarioDetail> {
+  return req<ScenarioDetail>(`/scenarios/${id}`, token);
+}
+
+export function updateScenario(
+  token: string,
+  id: string,
+  patch: { name?: string; graph?: unknown },
+): Promise<ScenarioDetail> {
+  return req<ScenarioDetail>(`/scenarios/${id}`, token, {
+    method: 'PUT',
+    body: patch,
+  });
+}
+
+export function deleteScenario(token: string, id: string): Promise<void> {
+  return req<void>(`/scenarios/${id}`, token, { method: 'DELETE' });
+}

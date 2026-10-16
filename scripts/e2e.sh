@@ -18,11 +18,17 @@ fi
 E2E_USER="e2e-${TS}@example.com"
 E2E_PASS="e2e-pass-123"
 CREATED_ID=""
+SCENARIO_ID=""
 
 pass() { echo "  ok: $1"; }
 fail() { echo "  FAIL: $1"; exit 1; }
 
 cleanup() {
+  if [[ -n "$SCENARIO_ID" && -n "${USER_TOKEN:-}" ]]; then
+    curl -s -o /dev/null -X DELETE "$BASE/scenarios/$SCENARIO_ID" \
+      -H "Authorization: Bearer $USER_TOKEN" || true
+    echo "  cleanup: удалён сценарий $SCENARIO_ID"
+  fi
   if [[ -n "$CREATED_ID" && -n "${ADMIN_TOKEN:-}" ]]; then
     curl -s -o /dev/null -X DELETE "$BASE/admin/users/$CREATED_ID" \
       -H "Authorization: Bearer $ADMIN_TOKEN" || true
@@ -65,6 +71,37 @@ CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/admin/users" \
   -H "Authorization: Bearer $USER_TOKEN")"
 [[ "$CODE" == "403" ]] || fail "ожидался 403, получили $CODE"
 pass "403 для USER"
+
+echo "== scenarios CRUD (POST → GET → PUT → DELETE) =="
+SCENARIO_ID="$(curl -s -X POST "$BASE/scenarios" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -d '{"name":"e2e-variant","graph":{"seed":2040,"nodes":[],"edges":[]}}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
+[[ -n "$SCENARIO_ID" ]] || fail "scenario create"
+pass "scenario create $SCENARIO_ID"
+
+curl -s "$BASE/scenarios" -H "Authorization: Bearer $USER_TOKEN" | grep -q "$SCENARIO_ID" \
+  || fail "scenario list"
+pass "scenario list"
+
+curl -s "$BASE/scenarios/$SCENARIO_ID" -H "Authorization: Bearer $USER_TOKEN" \
+  | grep -q '"hash":"[0-9a-f]\{40\}"' || fail "scenario hash"
+pass "scenario hash (sha1, 40 hex)"
+
+RENAMED="$(curl -s -X PUT "$BASE/scenarios/$SCENARIO_ID" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $USER_TOKEN" -d '{"name":"e2e-variant-2"}')"
+echo "$RENAMED" | grep -q "e2e-variant-2" || fail "scenario rename: $RENAMED"
+pass "scenario rename"
+
+CODE="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/scenarios/123e4567-e89b-12d3-a456-426614174000" \
+  -H "Authorization: Bearer $USER_TOKEN")"
+[[ "$CODE" == "404" ]] || fail "ожидался 404 чужого проекта, получили $CODE"
+pass "404 чужого проекта"
+
+curl -s -f -X DELETE "$BASE/scenarios/$SCENARIO_ID" \
+  -H "Authorization: Bearer $USER_TOKEN" > /dev/null || fail "scenario delete"
+SCENARIO_ID="" # удалили сами — trap'у делать нечего
+pass "scenario delete"
 
 echo "== delete user (DELETE — чистка за собой) =="
 curl -s -f -X DELETE "$BASE/admin/users/$CREATED_ID" \

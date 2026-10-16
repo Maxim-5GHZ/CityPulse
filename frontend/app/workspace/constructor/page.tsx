@@ -20,6 +20,7 @@ import { buildConclusion } from '@/lib/city/conclusion';
 const CityMap = dynamic(() => import('@/components/city/CityMap'), { ssr: false });
 const City3D = dynamic(() => import('@/components/city/City3D'), { ssr: false });
 const ConclusionBox = dynamic(() => import('@/components/city/ConclusionBox'), { ssr: false });
+const ProjectsPanel = dynamic(() => import('@/components/city/ProjectsPanel'), { ssr: false });
 
 // Стекло как на /login и /workspace (см. AGENTS.md, cardCls).
 const cardCls =
@@ -247,6 +248,16 @@ export default function ConstructorPage() {
 
   const reset = useCallback(() => {
     withOsmBuildings(seedModel()).then(setModel).catch(() => setModel(seedModel()));
+    setSelectedAttrId(null);
+    setSelectedBld(null);
+    setAddMode(false);
+    setEdgeMode(false);
+    setEdgeFrom(null);
+  }, []);
+
+  /** Открыть проект с сервера: граф целиком заменяет текущий, режимы сбрасываем. */
+  const openProject = useCallback((m: DistrictModel) => {
+    setModel(m);
     setSelectedAttrId(null);
     setSelectedBld(null);
     setAddMode(false);
@@ -483,6 +494,13 @@ export default function ConstructorPage() {
             <h2 className={sectionTitle}>Заключение</h2>
             <div className="mt-3">
               <ConclusionBox conclusion={conclusion} />
+            </div>
+          </section>
+
+          <section className={cardCls} aria-label="Проекты">
+            <h2 className={sectionTitle}>Проекты</h2>
+            <div className="mt-3">
+              <ProjectsPanel token={token} currentModel={model} onOpen={openProject} />
             </div>
           </section>
         </aside>
