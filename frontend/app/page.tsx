@@ -106,7 +106,7 @@ export default function PresentationPage() {
       badge: 'О проекте',
       title: 'Пульс твоего города',
       subtitle:
-        'CityPulse собирает жизнь города в одном месте: места, события и настроения.',
+        'CityPulse Жизнь города на твоей ладони.',
       content: (
         <div className={`${cardCls} flex flex-col items-center gap-5`}>
           <div className="mx-auto flex justify-center">
