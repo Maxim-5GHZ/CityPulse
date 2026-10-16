@@ -27,6 +27,8 @@ export interface ConclusionInput {
   /** час слайдера тени — для текста правил */
   hour: number;
   sun: SunPos;
+  /** комфорт двора из wind.ts (нет — правила про ветер молчат) */
+  wind?: { comfort: number };
 }
 
 function centroid(poly: [number, number][]): [number, number] {
@@ -67,7 +69,7 @@ function maxShade(model: DistrictModel, sun: SunPos): ShadeHit | null {
   return best && best.pct > 0 ? best : null;
 }
 
-export function buildConclusion({ model, baseline, current, hour, sun }: ConclusionInput): Conclusion {
+export function buildConclusion({ model, baseline, current, hour, sun, wind }: ConclusionInput): Conclusion {
   const rules: ConclusionRule[] = [];
   const dM1 = Math.round((current.m1 - baseline.m1) * 10) / 10;
   const dM2 = Math.round((current.m2 - baseline.m2) * 1000) / 1000;
@@ -215,8 +217,25 @@ export function buildConclusion({ model, baseline, current, hour, sun }: Conclus
     });
   }
 
-  // NO_WIND / NO_PRICE: правил про комфорт двора и бюджет нет осознанно —
-  // wind.ts и цены появятся позже (§9.7 пп.4–7). Декоративных правил не пишем.
+  // R16–R17. Комфорт двора (§9.7, правила 4–5).
+  if (wind) {
+    if (wind.comfort < 0.4) {
+      rules.push({
+        id: 'R16',
+        tone: 'bad',
+        text: `Во дворе застой (комфорт ${wind.comfort.toFixed(2)}) — откройте проезд по ветру / проредите застройку.`,
+      });
+    } else if (wind.comfort > 0.8) {
+      rules.push({
+        id: 'R17',
+        tone: 'info',
+        text: `Двор продувается (комфорт ${wind.comfort.toFixed(2)}) — добавьте пористую зелень с запада.`,
+      });
+    }
+  }
+
+  // NO_PRICE: правила про бюджет нет осознанно — цен в модели нет (§9.7 п.6).
+  // Декоративных правил не пишем.
 
   // R15. Вердикт.
   const worse = dM1 > 0 || dM2 < 0;

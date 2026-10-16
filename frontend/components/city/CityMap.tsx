@@ -18,6 +18,7 @@ import { fromLonLat, toLonLat } from 'ol/proj.js';
 import Translate from 'ol/interaction/Translate.js';
 import { Style, Fill, Stroke, Circle as CircleStyle, Text } from 'ol/style.js';
 import type { DistrictModel } from '@/lib/city/model';
+import type { WindCell } from '@/lib/city/wind';
 import { gridToLonLat, lonLatToGrid } from '@/lib/city/proj';
 
 interface Props {
@@ -29,6 +30,8 @@ interface Props {
   /** геометрия кратчайших путей домов до остановки (синие пунктиры) */
   routeLines: [number, number][][];
   shadowPolys: [number, number][][];
+  /** поле ветра 8×8 (null — слой скрыт) */
+  windCells: WindCell[] | null;
   onToggleEdge: (edgeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onSelectAttr: (attrId: string | null) => void;
@@ -43,7 +46,7 @@ const g2map = (x: number, y: number): [number, number] => {
   return fromLonLat([lon, lat]) as [number, number];
 };
 
-export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edgeFrom, routeLines, shadowPolys, onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt, className }: Props) {
+export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edgeFrom, routeLines, shadowPolys, windCells, onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt, className }: Props) {
   const divRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
   const buildSrc = useRef(new VectorSource());
@@ -51,6 +54,7 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
   const attrSrc = useRef(new VectorSource());
   const shSrc = useRef(new VectorSource());
   const routeSrc = useRef(new VectorSource());
+  const windSrc = useRef(new VectorSource());
   const cbRef = useRef({ onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt });
   cbRef.current = { onToggleEdge, onDeleteEdge, onSelectAttr, onMoveAttrToNode, onNodePick, onAddAt };
   const stateRef = useRef({ selectedAttrId, addMode, edgeMode });
@@ -75,10 +79,14 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
       source: routeSrc.current,
       style: new Style({ stroke: new Stroke({ color: '#2563eb', width: 3, lineDash: [8, 6] }) }),
     });
+    const windLayer = new VectorLayer({
+      source: windSrc.current,
+      style: new Style({ stroke: new Stroke({ color: 'rgba(71,85,105,0.85)', width: 2 }) }),
+    });
     const attrLayer = new VectorLayer({ source: attrSrc.current });
     const map = new OlMap({
       target: divRef.current,
-      layers: [osm, shLayer, buildLayer, netLayer, routeLayer, attrLayer],
+      layers: [osm, shLayer, buildLayer, netLayer, routeLayer, windLayer, attrLayer],
       view: new View({ center: fromLonLat([36.61, 55.096]), zoom: 15 }),
     });
     // Drag остановки: тянем маркер, на отпускании — snap к ближайшему узлу.
@@ -230,6 +238,22 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
         /* ignore */
       }
     }
+    // Ветер: стрелки поля 8×8, длина — по скорости.
+    windSrc.current.clear();
+    if (windCells) {
+      for (const c of windCells) {
+        const len = 25 + c.speed * 6;
+        const ex = c.x + c.ux * len;
+        const ey = c.y + c.uy * len;
+        try {
+          windSrc.current.addFeature(
+            new Feature({ geometry: new LineString([g2map(c.x, c.y), g2map(ex, ey)]) }),
+          );
+        } catch {
+          /* ignore */
+        }
+      }
+    }
     // Притяжения.
     attrSrc.current.clear();
     const colors: Record<string, string> = { ostanovka: '#2563eb', park: '#16a34a', shkola: '#d97706' };
@@ -252,13 +276,13 @@ export default function CityMap({ model, selectedAttrId, addMode, edgeMode, edge
       );
       attrSrc.current.addFeature(f);
     }
-  }, [model, selectedAttrId, shadowPolys, edgeFrom, routeLines]);
+  }, [model, selectedAttrId, shadowPolys, edgeFrom, routeLines, windCells]);
 
   return (
     <div
       ref={divRef}
       role="img"
-      aria-label="Схема района: здания, пешеходная сеть, остановки, парк и кратчайшие пути домов. Клик по переходу закрывает или открывает его, маркер остановки можно тянуть."
+      aria-label="Схема района: здания, пешеходная сеть, остановки, парк, кратчайшие пути домов и стрелки ветра. Клик по переходу закрывает или открывает его, маркер остановки можно тянуть."
       className={
         className ??
         'h-[420px] w-full overflow-hidden rounded-[24px] border border-white/60 dark:border-white/20'

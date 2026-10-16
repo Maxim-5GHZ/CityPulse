@@ -15,6 +15,7 @@ import { calcMetrics, diffMetrics } from '@/lib/city/metrics';
 import { buildAdj, canonicalGraph, dijkstraWithPrev, sha1Hex, shortestPath } from '@/lib/city/graph';
 import { PRESETS, rectFootprint, type PresetSpec } from '@/lib/city/buildings';
 import { shadePct, shadowOffset, shadowPolygon, sunAt } from '@/lib/city/shadow';
+import { windField } from '@/lib/city/wind';
 import { buildConclusion } from '@/lib/city/conclusion';
 
 const CityMap = dynamic(() => import('@/components/city/CityMap'), { ssr: false });
@@ -87,6 +88,9 @@ export default function ConstructorPage() {
   const [edgeMode, setEdgeMode] = useState(false);
   const [edgeFrom, setEdgeFrom] = useState<string | null>(null);
   const [showRoutes, setShowRoutes] = useState(true);
+  const [showWind, setShowWind] = useState(true);
+  const [windDir, setWindDir] = useState(90);
+  const [windSpeed, setWindSpeed] = useState(4);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>(null);
   const [selectedBld, setSelectedBld] = useState<string | null>(null);
   const [hash, setHash] = useState('');
@@ -156,10 +160,13 @@ export default function ConstructorPage() {
     return sunAt(d);
   }, [hour]);
 
+  /** Ветер-эвристика: поле 8×8, конус затишья L=2H, зелень −30% (не OpenFOAM). */
+  const wind = useMemo(() => windField(model, windDir, windSpeed), [model, windDir, windSpeed]);
+
   /** Заключение-эвристика: вердикт + сработавшие правила (§9.7). */
   const conclusion = useMemo(
-    () => buildConclusion({ model, baseline, current, hour, sun }),
-    [model, baseline, current, hour, sun],
+    () => buildConclusion({ model, baseline, current, hour, sun, wind: { comfort: wind.comfort } }),
+    [model, baseline, current, hour, sun, wind],
   );
 
   const shadowPolys = useMemo<[number, number][][]>(() => {
@@ -337,6 +344,7 @@ export default function ConstructorPage() {
                 edgeFrom={edgeFrom}
                 routeLines={routeLines}
                 shadowPolys={shadowPolys}
+                windCells={showWind ? wind.cells : null}
                 onToggleEdge={toggleEdge}
                 onDeleteEdge={deleteEdge}
                 onSelectAttr={setSelectedAttrId}
@@ -389,7 +397,41 @@ export default function ConstructorPage() {
               >
                 Маршруты
               </button>
+              <button
+                type="button"
+                onClick={() => setShowWind((v) => !v)}
+                className={showWind ? pillActive : pillBtn}
+                aria-pressed={showWind}
+                title="Стрелки поля 8×8 — эвристика, не OpenFOAM"
+              >
+                Ветер
+              </button>
             </div>
+            <label className="mt-3 block text-sm text-gray-600 dark:text-gray-300">
+              Ветер: {windDir}° · {windSpeed} м/с
+              <span className="mt-1 flex gap-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  step={15}
+                  value={windDir}
+                  onChange={(e) => setWindDir(Number(e.target.value))}
+                  className="w-full"
+                  aria-label="Направление ветра в градусах"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={12}
+                  step={0.5}
+                  value={windSpeed}
+                  onChange={(e) => setWindSpeed(Number(e.target.value))}
+                  className="w-full"
+                  aria-label="Скорость ветра в метрах в секунду"
+                />
+              </span>
+            </label>
             <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Пресет здания">
               {PRESETS.map((p) => (
                 <button
@@ -448,6 +490,15 @@ export default function ConstructorPage() {
                 </p>
               </div>
               <div className="rounded-2xl border border-white/60 bg-white/60 p-4 dark:border-white/20 dark:bg-white/10">
+                <p className={sectionTitle}>Ветер · комфорт двора</p>
+                <p className="text-2xl font-black text-gray-900 dark:text-gray-100">
+                  {wind.comfort.toFixed(2)}{' '}
+                  <span className="text-sm font-medium text-gray-500 dark:text-gray-400">
+                    эвристика, не OpenFOAM
+                  </span>
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/60 bg-white/60 p-4 dark:border-white/20 dark:bg-white/10">
                 <p className={sectionTitle}>M2 · жители с парком в {parkN} м</p>
                 <p className="text-2xl font-black text-gray-900 dark:text-gray-100">
                   {Math.round(current.m2 * 100)}%{' '}
@@ -485,6 +536,7 @@ export default function ConstructorPage() {
                 <li>Новая коробка закрывает ребра в радиусе ~60 м — обход удлиняет M1.</li>
                 <li>Тень: suncalc для Обнинска (55.096, 36.610), L=H/tan(alt). В 3D тот же вектор ставит свет.</li>
                 <li>Здания — реальные футпринты OSM (ODbL). Не точный двойник (п.7).</li>
+                <li>Ветер — поле 8×8, конус затишья L=2H, зелень −30%. Эвристика, не OpenFOAM.</li>
                 <li>Заключение — эвристика из if-then правил (§9.7), без LLM.</li>
               </ul>
             </details>

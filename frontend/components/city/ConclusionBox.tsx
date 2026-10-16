@@ -36,7 +36,7 @@ export default function ConclusionBox({ conclusion }: { conclusion: Conclusion }
         </ul>
       )}
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-        Эвристика из правил (§9.7), не прогноз. Про ветер и цены правил пока нет — появятся с wind.ts и проектами.
+        Эвристика из правил (§9.7), не прогноз. Ветер — тоже эвристика, не OpenFOAM.
       </p>
     </div>
   );
