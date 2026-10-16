@@ -1,377 +1,641 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import AppHeader from '@/components/AppHeader';
-import DistrictMap from '@/components/city/DistrictMap';
+import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
 import DistrictMap3D from '@/components/city/DistrictMap3D';
-import { OBNINSK_MARX_DISTRICT } from '@/lib/city-engine/presets';
+import { EMPTY_DISTRICT, OBNINSK_MARX_DISTRICT } from '@/lib/city-engine/presets';
 import { calculateMetrics } from '@/lib/city-engine/metrics';
-import { DistrictScenario, GraphEdge, Building, Amenity } from '@/lib/city-engine/types';
+import { DistrictScenario, Building, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
+import { listProjects, createProject, updateProject, deleteProject, getProject, ProjectSummary } from '@/lib/projectApi';
 
-const cardCls =
-  'rounded-[28px] border border-white/60 bg-white/40 p-5 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_20px_50px_-16px_rgba(20,26,38,0.25)] ' +
-  'backdrop-blur-xl backdrop-saturate-150 dark:border-white/20 dark:bg-gray-900/40';
+const cadBtn =
+  'px-3 py-1.5 text-xs font-mono font-medium rounded border border-gray-600 bg-gray-800 text-gray-200 ' +
+  'hover:bg-gray-700 hover:border-gray-500 active:bg-gray-900 transition-colors disabled:opacity-50';
 
-const glassBtn =
-  'transform-gpu rounded-full border border-white/60 bg-white/60 px-4 py-2 text-xs font-semibold text-gray-700 shadow-sm backdrop-blur-xl ' +
-  'transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-white active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ' +
-  'dark:border-white/20 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20';
-
-const glassBtnActive =
-  'transform-gpu rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white shadow-md backdrop-blur-xl ' +
-  'transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-blue-700 active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none';
+const cadBtnActive =
+  'px-3 py-1.5 text-xs font-mono font-semibold rounded border border-blue-500 bg-blue-600 text-white ' +
+  'hover:bg-blue-500 transition-colors shadow-sm';
 
 export default function WorkspacePage() {
   const { ready, token } = useAuth();
   const router = useRouter();
-  const [baseScenario] = useState<DistrictScenario>(OBNINSK_MARX_DISTRICT);
-  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(OBNINSK_MARX_DISTRICT);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string>('b3');
-  const [viewMode, setViewMode] = useState<'2d' | '3d'>('3d');
+
+  const [baseScenario, setBaseScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
+  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
+  const [toolMode, setToolMode] = useState<ToolMode>('select');
+
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string>('Проект района 2040');
+  const [projectsList, setProjectsList] = useState<ProjectSummary[]>([]);
+  const [showProjectsModal, setShowProjectsModal] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+
+  const [simPlaying, setSimPlaying] = useState<boolean>(true);
+  const [simSpeed, setSimSpeed] = useState<1 | 2 | 5>(1);
 
   useEffect(() => {
     if (ready && !token) router.replace('/login');
   }, [ready, token, router]);
 
-  const baseMetrics = useMemo(() => calculateMetrics(baseScenario, baseScenario), [baseScenario]);
-  const currentMetrics = useMemo(() => calculateMetrics(currentScenario, baseScenario), [currentScenario, baseScenario]);
+  const refreshProjectsList = useCallback(async () => {
+    if (!token) return;
+    try {
+      setProjectsError(null);
+      const list = await listProjects(token);
+      setProjectsList(list);
+    } catch {
+      setProjectsError('Не удалось загрузить проекты');
+    }
+  }, [token]);
 
-  const hasCustomCrossing = currentScenario.edges.some(
-    (e) => ((e.from === 'n8' && e.to === 'n13') || (e.from === 'n13' && e.to === 'n8')) && e.isActive,
+  useEffect(() => {
+    if (token) void refreshProjectsList();
+  }, [token, refreshProjectsList]);
+
+  const metrics = useMemo(
+    () => calculateMetrics(currentScenario, baseScenario),
+    [currentScenario, baseScenario],
   );
-  const currentBusStop = currentScenario.amenities.find((a) => a.type === 'bus_stop');
-  const busStopNodeId = currentBusStop ? currentBusStop.nodeId : 'n14';
-  const hasCustomPark = currentScenario.amenities.some((a) => a.id === 'a-park-north');
-  const hasNewBuilding = currentScenario.buildings.some((b) => b.id === 'b-new-tower');
+  const baseMetrics = useMemo(
+    () => calculateMetrics(baseScenario, baseScenario),
+    [baseScenario],
+  );
 
-  const activePath = selectedBuildingId ? currentMetrics.busPaths[selectedBuildingId] : null;
+  const busDelta = metrics.weightedAvgBusDistM - baseMetrics.weightedAvgBusDistM;
+  const parkDelta = metrics.parkAccessPercent - baseMetrics.parkAccessPercent;
+  const activePath = selectedBuildingId ? metrics.busPaths[selectedBuildingId] : null;
   const activePathNodeIds = activePath ? activePath.pathNodeIds : [];
   const selectedBuilding = currentScenario.buildings.find((b) => b.id === selectedBuildingId);
 
-  const toggleCrossing = () => {
-    setCurrentScenario((prev) => {
-      const exists = prev.edges.some((e) => (e.from === 'n8' && e.to === 'n13') || (e.from === 'n13' && e.to === 'n8'));
-      if (exists) {
-        return { ...prev, edges: prev.edges.filter((e) => !((e.from === 'n8' && e.to === 'n13') || (e.from === 'n13' && e.to === 'n8'))) };
+  const findClosestNodeId = (x: number, y: number, nodes: GraphNode[]): string => {
+    let best = nodes[0]?.id ?? 'n1';
+    let minD = Infinity;
+    for (const n of nodes) {
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d < minD) {
+        minD = d;
+        best = n.id;
       }
-      const newEdge: GraphEdge = {
-        id: 'cross-marx-tsiolkovsky', from: 'n8', to: 'n13', lengthM: 110,
-        type: 'crossing', isActive: true, isAccessible: true, isCustom: true,
-      };
-      return { ...prev, edges: [...prev.edges, newEdge] };
-    });
+    }
+    return best;
   };
 
-  const toggleStop = () => {
+  // Трассировка дорог и тротуаров
+  const handleAddRoad = (x1: number, y1: number, x2: number, y2: number, type: 'road' | 'sidewalk' | 'crossing' = 'sidewalk') => {
     setCurrentScenario((prev) => {
-      const nextNode = busStopNodeId === 'n14' ? 'n7' : 'n14';
-      return { ...prev, amenities: prev.amenities.map((a) => (a.type === 'bus_stop' ? { ...a, nodeId: nextNode } : a)) };
-    });
-  };
+      let node1 = prev.nodes.find((n) => n.x === x1 && n.y === y1);
+      let node2 = prev.nodes.find((n) => n.x === x2 && n.y === y2);
+      const newNodes = [...prev.nodes];
 
-  const toggleNorthPark = () => {
-    setCurrentScenario((prev) => {
-      const exists = prev.amenities.some((a) => a.id === 'a-park-north');
-      if (exists) return { ...prev, amenities: prev.amenities.filter((a) => a.id !== 'a-park-north') };
-      const newPark: Amenity = {
-        id: 'a-park-north', name: 'Новый карманный сквер (Север)', type: 'park',
-        nodeId: 'n2', coverageRadiusM: 350, isCustom: true,
-      };
-      return { ...prev, amenities: [...prev.amenities, newPark] };
-    });
-  };
-
-  const toggleNewBuilding = () => {
-    setCurrentScenario((prev) => {
-      const exists = prev.buildings.some((b) => b.id === 'b-new-tower');
-      if (exists) {
-        if (selectedBuildingId === 'b-new-tower') setSelectedBuildingId('b3');
-        return {
-          ...prev,
-          buildings: prev.buildings.filter((b) => b.id !== 'b-new-tower'),
-          edges: prev.edges.filter((e) => e.id !== 'e-new-tower-path'),
-        };
+      if (!node1) {
+        node1 = { id: `n-${Date.now()}-1`, x: x1, y: y1, label: 'Узел', type: 'intersection', isCustom: true };
+        newNodes.push(node1);
       }
-      const newTower: Building = {
-        id: 'b-new-tower', name: 'Новый ЖК «Гагаринский»', address: 'г. Обнинск, ул. Гагарина, стр. 1',
-        floors: 16, residentsPerFloor: 32, residents: 512, gateNodeId: 'n-new-site',
-        x: 760, y: 40, width: 80, height: 55, isCustom: true,
-      };
+      if (!node2) {
+        node2 = { id: `n-${Date.now()}-2`, x: x2, y: y2, label: 'Узел', type: 'intersection', isCustom: true };
+        newNodes.push(node2);
+      }
+
+      const lengthM = Math.round(Math.hypot(x2 - x1, y2 - y1) * 1.1);
       const newEdge: GraphEdge = {
-        id: 'e-new-tower-path', from: 'n-new-site', to: 'n5', lengthM: 80,
-        type: 'sidewalk', isActive: true, isAccessible: true, isCustom: true,
+        id: `e-${Date.now()}`,
+        from: node1.id,
+        to: node2.id,
+        lengthM,
+        type,
+        lanes: type === 'road' ? 2 : undefined,
+        isActive: true,
+        isAccessible: true,
+        isCustom: true,
       };
-      setSelectedBuildingId('b-new-tower');
-      return { ...prev, buildings: [...prev.buildings, newTower], edges: [...prev.edges, newEdge] };
+
+      return { ...prev, nodes: newNodes, edges: [...prev.edges, newEdge] };
     });
   };
 
-  const toggleBlock = (edgeId: string) => {
+  // ПЕРЕХОД В 1 КЛИК: разбивает полосу автодороги перпендикуляром
+  const handleAddCrossingDirect = (edgeId: string, px: number, py: number) => {
+    setCurrentScenario((prev) => {
+      const edge = prev.edges.find((e) => e.id === edgeId);
+      if (!edge) return prev;
+      const nFrom = prev.nodes.find((n) => n.id === edge.from);
+      const nTo = prev.nodes.find((n) => n.id === edge.to);
+      if (!nFrom || !nTo) return prev;
+
+      const dx = nTo.x - nFrom.x;
+      const dy = nTo.y - nFrom.y;
+      const len = Math.hypot(dx, dy);
+      const nx = len > 0 ? -dy / len : 0;
+      const ny = len > 0 ? dx / len : 0;
+
+      // Два створа по обеим сторонам проезжей части (отступ 18px)
+      const nSide1: GraphNode = {
+        id: `nc-${Date.now()}-1`,
+        x: Math.round(px + nx * 18),
+        y: Math.round(py + ny * 18),
+        label: 'Створ перехода',
+        type: 'intersection',
+        isCustom: true,
+      };
+      const nSide2: GraphNode = {
+        id: `nc-${Date.now()}-2`,
+        x: Math.round(px - nx * 18),
+        y: Math.round(py - ny * 18),
+        label: 'Створ перехода',
+        type: 'intersection',
+        isCustom: true,
+      };
+
+      const crossingEdge: GraphEdge = {
+        id: `cross-${Date.now()}`,
+        from: nSide1.id,
+        to: nSide2.id,
+        lengthM: 35,
+        type: 'crossing',
+        isActive: true,
+        isAccessible: true,
+        isCustom: true,
+      };
+
+      return {
+        ...prev,
+        nodes: [...prev.nodes, nSide1, nSide2],
+        edges: [...prev.edges, crossingEdge],
+      };
+    });
+    setToolMode('select');
+  };
+
+  // ПЕРЕКРЫТИЕ ПУТИ (РЕМОНТ / БЛОКИРОВКА)
+  const handleToggleBlockEdge = (edgeId: string) => {
     setCurrentScenario((prev) => ({
       ...prev,
       edges: prev.edges.map((e) => (e.id === edgeId ? { ...e, isActive: !e.isActive } : e)),
     }));
   };
 
-  const changeFloors = (delta: number) => {
+  // Добавление дома
+  const handleAddBuilding = (x: number, y: number) => {
+    setCurrentScenario((prev) => {
+      const gateNodeId = findClosestNodeId(x + 40, y + 25, prev.nodes);
+      const newBuilding: Building = {
+        id: `b-${Date.now()}`,
+        name: `Корпус ${prev.buildings.length + 1}`,
+        address: 'Проектируемый проезд',
+        floors: 9,
+        residentsPerFloor: 24,
+        residents: 216,
+        gateNodeId,
+        x,
+        y,
+        width: 80,
+        height: 50,
+        isCustom: true,
+      };
+      setSelectedBuildingId(newBuilding.id);
+      return { ...prev, buildings: [...prev.buildings, newBuilding] };
+    });
+    setToolMode('select');
+  };
+
+  // Добавление остановки или парка
+  const handleAddAmenity = (type: 'bus_stop' | 'park', x: number, y: number) => {
+    setCurrentScenario((prev) => {
+      let targetNode = prev.nodes.find((n) => Math.hypot(n.x - x, n.y - y) <= 25);
+      const newNodes = [...prev.nodes];
+      if (!targetNode) {
+        targetNode = {
+          id: `n-${Date.now()}`,
+          x,
+          y,
+          label: type === 'bus_stop' ? 'Остановка' : 'Сквер',
+          type: type === 'bus_stop' ? 'bus_stop' : 'park_gate',
+          isCustom: true,
+        };
+        newNodes.push(targetNode);
+      }
+
+      const newAmenity: Amenity = {
+        id: `a-${Date.now()}`,
+        name: type === 'bus_stop' ? 'Новая остановка' : 'Городской сквер',
+        type,
+        nodeId: targetNode.id,
+        coverageRadiusM: type === 'bus_stop' ? 500 : 350,
+        isCustom: true,
+      };
+      return { ...prev, nodes: newNodes, amenities: [...prev.amenities, newAmenity] };
+    });
+    setToolMode('select');
+  };
+
+  // Удаление
+  const handleDeleteBuilding = (id: string) => {
+    setCurrentScenario((prev) => ({
+      ...prev,
+      buildings: prev.buildings.filter((b) => b.id !== id),
+    }));
+    if (selectedBuildingId === id) setSelectedBuildingId(null);
+  };
+
+  const handleDeleteEdge = (id: string) => {
+    setCurrentScenario((prev) => ({
+      ...prev,
+      edges: prev.edges.filter((e) => e.id !== id),
+    }));
+  };
+
+  const handleDeleteAmenity = (id: string) => {
+    setCurrentScenario((prev) => ({
+      ...prev,
+      amenities: prev.amenities.filter((a) => a.id !== id),
+    }));
+  };
+
+  const updateSelectedBuilding = (fields: Partial<Building>) => {
     if (!selectedBuildingId) return;
     setCurrentScenario((prev) => ({
       ...prev,
       buildings: prev.buildings.map((b) => {
         if (b.id !== selectedBuildingId) return b;
-        const floors = Math.min(25, Math.max(1, b.floors + delta));
-        return { ...b, floors, residents: floors * b.residentsPerFloor };
+        const updated = { ...b, ...fields };
+        if (fields.floors !== undefined || fields.residentsPerFloor !== undefined) {
+          updated.residents = updated.floors * updated.residentsPerFloor;
+        }
+        return updated;
       }),
     }));
   };
 
-  const applyScenario = (mode: 'base' | 'crossing' | 'dense' | 'green') => {
-    if (mode === 'base') {
-      setCurrentScenario(baseScenario);
-      setSelectedBuildingId('b3');
-    } else if (mode === 'crossing') {
-      setCurrentScenario({
-        ...baseScenario,
-        edges: [...baseScenario.edges, {
-          id: 'cross-marx-tsiolkovsky', from: 'n8', to: 'n13', lengthM: 110,
-          type: 'crossing' as const, isActive: true, isAccessible: true, isCustom: true,
-        }],
-      });
-      setSelectedBuildingId('b3');
-    } else if (mode === 'dense') {
-      setCurrentScenario({
-        ...baseScenario,
-        edges: [...baseScenario.edges,
-          { id: 'cross-marx-tsiolkovsky', from: 'n8', to: 'n13', lengthM: 110, type: 'crossing', isActive: true, isAccessible: true, isCustom: true },
-          { id: 'e-new-tower-path', from: 'n-new-site', to: 'n5', lengthM: 80, type: 'sidewalk', isActive: true, isAccessible: true, isCustom: true },
-        ],
-        buildings: [
-          ...baseScenario.buildings.map((b) => (b.id === 'b3' ? { ...b, floors: 24, residents: 864 } : b)),
-          { id: 'b-new-tower', name: 'Новый ЖК «Гагаринский»', address: 'г. Обнинск, ул. Гагарина, стр. 1', floors: 22, residentsPerFloor: 32, residents: 704, gateNodeId: 'n-new-site', x: 760, y: 40, width: 80, height: 55, isCustom: true },
-        ],
-      });
-      setSelectedBuildingId('b-new-tower');
-    } else if (mode === 'green') {
-      setCurrentScenario({
-        ...baseScenario,
-        edges: [...baseScenario.edges, {
-          id: 'cross-marx-tsiolkovsky', from: 'n8', to: 'n13', lengthM: 110,
-          type: 'crossing', isActive: true, isAccessible: true, isCustom: true,
-        }],
-        amenities: [...baseScenario.amenities, {
-          id: 'a-park-north', name: 'Новый карманный сквер (Север)', type: 'park',
-          nodeId: 'n2', coverageRadiusM: 350, isCustom: true,
-        }],
-      });
-      setSelectedBuildingId('b2');
+  const handleSaveProject = async () => {
+    if (!token) return;
+    setIsSaving(true);
+    try {
+      const dataStr = JSON.stringify(currentScenario);
+      if (currentProjectId) {
+        await updateProject(token, currentProjectId, projectName, dataStr);
+      } else {
+        const created = await createProject(token, projectName, dataStr);
+        setCurrentProjectId(created.id);
+      }
+      await refreshProjectsList();
+    } catch (e) {
+      setProjectsError(e instanceof Error ? e.message : 'Ошибка сохранения');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const deltaBusDist = currentMetrics.weightedAvgBusDistM - baseMetrics.weightedAvgBusDistM;
-  const deltaParkAccess = currentMetrics.parkAccessPercent - baseMetrics.parkAccessPercent;
-  const budgetRatio = Math.min(100, Math.round((currentMetrics.budgetSpentRub / currentMetrics.budgetLimitRub) * 100));
+  const handleLoadProject = async (id: string) => {
+    if (!token) return;
+    try {
+      const proj = await getProject(token, id);
+      const parsed = JSON.parse(proj.data) as DistrictScenario;
+      setCurrentScenario(parsed);
+      setCurrentProjectId(proj.id);
+      setProjectName(proj.name);
+      setSelectedBuildingId(parsed.buildings[0]?.id ?? null);
+      setShowProjectsModal(false);
+    } catch {
+      setProjectsError('Не удалось открыть проект');
+    }
+  };
 
   if (!ready || !token) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center px-6 py-6">
-        <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-          {!ready ? 'Загрузка…' : 'Перенаправляем на страницу входа…'}
-        </p>
+        <p className="text-center font-mono text-sm text-gray-400">Инициализация...</p>
       </main>
     );
   }
 
   return (
-    <div className="relative min-h-screen bg-cover bg-center" style={{ backgroundImage: "url('/city.png')" }}>
-      <div className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/40 to-white/70 dark:from-black/80 dark:via-black/70 dark:to-black/85" />
+    <div className="relative min-h-screen bg-[#0e121a] text-gray-200">
       <AppHeader />
-      <main className="relative z-10 mx-auto w-full max-w-7xl px-4 py-5 sm:px-6">
-        <div className={`${cardCls} mb-4 flex flex-col justify-between gap-4 md:flex-row md:items-center`}>
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-gray-900 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-white dark:bg-gray-700">
-                Кейс 03
-              </span>
-              <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                Обнинск 2040: Симулятор решений городской среды
-              </span>
-            </div>
-            <h1 className="mt-1 text-xl font-bold tracking-tight text-gray-900 sm:text-2xl dark:text-gray-100">
-              51-й микрорайон: пр. Маркса / ул. Гагарина / ТРК «Плаза»
-            </h1>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Население: {currentMetrics.totalResidents.toLocaleString('ru-RU')} жителей • {currentScenario.buildings.length} жилых домов • {currentScenario.edges.length} связей сети • 2 магистрали
-            </p>
+
+      <main className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6">
+        {/* Инженерная верхняя командная строка */}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 bg-[#161c26] p-2.5">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-xs text-gray-400">ПРОЕКТ:</span>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              className="rounded border border-gray-600 bg-gray-900 px-2 py-1 font-mono text-xs font-bold text-gray-100 outline-none focus:border-blue-500"
+            />
+            <span className="font-mono text-xs text-gray-500">
+              [{currentScenario.buildings.length} домов | {currentScenario.edges.length} связей]
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-1 text-xs font-semibold uppercase text-gray-500 dark:text-gray-400">Сценарии жюри:</span>
-            <button type="button" onClick={() => applyScenario('base')} className={glassBtn}>Базовый</button>
-            <button type="button" onClick={() => applyScenario('crossing')} className={glassBtn}>+ Переход Маркса</button>
-            <button type="button" onClick={() => applyScenario('dense')} className={glassBtn}>Уплотнение (24 эт.)</button>
-            <button type="button" onClick={() => applyScenario('green')} className={glassBtn}>Зелёный каркас</button>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentScenario(OBNINSK_MARX_DISTRICT);
+                setBaseScenario(OBNINSK_MARX_DISTRICT);
+                setCurrentProjectId(null);
+                setProjectName('51-й микрорайон (Обнинск)');
+              }}
+              className={cadBtn}
+            >
+              Загрузить Обнинск-51
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentScenario(EMPTY_DISTRICT);
+                setBaseScenario(EMPTY_DISTRICT);
+                setCurrentProjectId(null);
+                setProjectName('Новый пустой чертёж');
+              }}
+              className={cadBtn}
+            >
+              Очистить чертёж
+            </button>
+            <button type="button" onClick={() => setShowProjectsModal(true)} className={cadBtn}>
+              Проекты БД
+            </button>
+            <button type="button" onClick={handleSaveProject} disabled={isSaving} className={cadBtnActive}>
+              {isSaving ? 'Запись...' : 'Сохранить'}
+            </button>
           </div>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-12">
-          <div className="space-y-4 lg:col-span-8">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex rounded-full border border-white/60 bg-white/60 p-1 backdrop-blur-xl dark:border-white/20 dark:bg-gray-800/60">
-                <button type="button" onClick={() => setViewMode('2d')} className={viewMode === '2d' ? glassBtnActive : glassBtn}>2D Генплан</button>
-                <button type="button" onClick={() => setViewMode('3d')} className={viewMode === '3d' ? glassBtnActive : glassBtn}>3D Интерактив</button>
-              </div>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {viewMode === '3d' ? 'Зажмите левую кнопку мыши для 3D-обзора' : 'Кликайте по дорожкам для перекрытия (ремонт)'}
-              </span>
+        {/* Панель инструментов CAD */}
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 bg-[#161c26] px-3 py-2">
+          {viewMode === '2d' ? (
+            <div className="flex flex-wrap items-center gap-1 font-mono text-xs">
+              <span className="mr-2 text-gray-400">ИНСТРУМЕНТЫ:</span>
+              <button type="button" onClick={() => setToolMode('select')} className={toolMode === 'select' ? cadBtnActive : cadBtn}>
+                ВЫБОР
+              </button>
+              <button type="button" onClick={() => setToolMode('road')} className={toolMode === 'road' ? cadBtnActive : cadBtn}>
+                АВТОДОРОГА
+              </button>
+              <button type="button" onClick={() => setToolMode('sidewalk')} className={toolMode === 'sidewalk' ? cadBtnActive : cadBtn}>
+                ТРОТУАР
+              </button>
+              <button type="button" onClick={() => setToolMode('crossing')} className={toolMode === 'crossing' ? cadBtnActive : cadBtn} title="Кликните по автодороге для создания перехода">
+                ПЕРЕХОД [1-КЛИК]
+              </button>
+              <button type="button" onClick={() => setToolMode('block')} className={toolMode === 'block' ? cadBtnActive : cadBtn} title="Клик по пути для блокировки/ремонта">
+                ПЕРЕКРЫТЬ
+              </button>
+              <button type="button" onClick={() => setToolMode('building')} className={toolMode === 'building' ? cadBtnActive : cadBtn}>
+                КОРПУС
+              </button>
+              <button type="button" onClick={() => setToolMode('bus_stop')} className={toolMode === 'bus_stop' ? cadBtnActive : cadBtn}>
+                ОСТАНОВКА
+              </button>
+              <button type="button" onClick={() => setToolMode('park')} className={toolMode === 'park' ? cadBtnActive : cadBtn}>
+                СКВЕР
+              </button>
+              <button type="button" onClick={() => setToolMode('delete')} className={toolMode === 'delete' ? cadBtnActive : cadBtn}>
+                СНОС
+              </button>
             </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
+              <span className="text-gray-400">СИМУЛЯЦИЯ:</span>
+              <button type="button" onClick={() => setSimPlaying((p) => !p)} className={simPlaying ? cadBtn : cadBtnActive}>
+                {simPlaying ? 'ПАУЗА' : 'СТАРТ'}
+              </button>
+              <div className="flex gap-1">
+                {([1, 2, 5] as const).map((s) => (
+                  <button key={s} type="button" onClick={() => setSimSpeed(s)} className={simSpeed === s ? cadBtnActive : cadBtn}>
+                    {s}X
+                  </button>
+                ))}
+              </div>
+              <span className="text-emerald-400">Трафик Обнинска активен</span>
+            </div>
+          )}
 
-            {viewMode === '3d' ? (
-              <DistrictMap3D
-                scenario={currentScenario}
-                selectedBuildingId={selectedBuildingId}
-                onSelectBuilding={setSelectedBuildingId}
-                activePathNodeIds={activePathNodeIds}
-                onToggleCrossing={toggleCrossing}
-                onToggleStop={toggleStop}
-                hasCustomCrossing={hasCustomCrossing}
-                busStopNodeId={busStopNodeId}
-                hasCustomPark={hasCustomPark}
-                onToggleNewBuilding={toggleNewBuilding}
-                hasNewBuilding={hasNewBuilding}
-              />
-            ) : (
+          {/* Переключатель 2D / 3D */}
+          <div className="flex gap-1 font-mono text-xs">
+            <button type="button" onClick={() => setViewMode('2d')} className={viewMode === '2d' ? cadBtnActive : cadBtn}>
+              2D ЧЕРТЁЖ
+            </button>
+            <button type="button" onClick={() => setViewMode('3d')} className={viewMode === '3d' ? cadBtnActive : cadBtn}>
+              3D СИМУЛЯЦИЯ
+            </button>
+          </div>
+        </div>
+
+        {/* Рабочее поле и инспектор параметров */}
+        <div className="grid gap-4 lg:grid-cols-12">
+          <div className="space-y-4 lg:col-span-8">
+            {viewMode === '2d' ? (
               <DistrictMap
                 scenario={currentScenario}
                 selectedBuildingId={selectedBuildingId}
                 onSelectBuilding={setSelectedBuildingId}
                 activePathNodeIds={activePathNodeIds}
-                onToggleCrossing={toggleCrossing}
-                onToggleStop={toggleStop}
-                onToggleBlock={toggleBlock}
-                hasCustomCrossing={hasCustomCrossing}
-                busStopNodeId={busStopNodeId}
-                hasCustomPark={hasCustomPark}
-                onToggleNewBuilding={toggleNewBuilding}
-                hasNewBuilding={hasNewBuilding}
+                toolMode={toolMode}
+                onAddRoad={handleAddRoad}
+                onAddBuilding={handleAddBuilding}
+                onAddAmenity={handleAddAmenity}
+                onAddCrossingDirect={handleAddCrossingDirect}
+                onToggleBlockEdge={handleToggleBlockEdge}
+                onDeleteBuilding={handleDeleteBuilding}
+                onDeleteEdge={handleDeleteEdge}
+                onDeleteAmenity={handleDeleteAmenity}
+              />
+            ) : (
+              <DistrictMap3D
+                scenario={currentScenario}
+                selectedBuildingId={selectedBuildingId}
+                onSelectBuilding={(id: string) => setSelectedBuildingId(id)}
+                activePathNodeIds={activePathNodeIds}
+                simPlaying={simPlaying}
+                simSpeed={simSpeed}
               />
             )}
-
-            <div className={`${cardCls} space-y-3`}>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
-                  Интерактивные вмешательства в район:
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={toggleCrossing} className={hasCustomCrossing ? glassBtnActive : glassBtn}>
-                    {hasCustomCrossing ? '✓ Переход у ЖК «Циолковский»' : '+ Переход через пр. Маркса'}
-                  </button>
-                  <button type="button" onClick={toggleStop} className={busStopNodeId === 'n7' ? glassBtnActive : glassBtn}>
-                    {busStopNodeId === 'n7' ? '✓ Остановка у жилых домов' : 'Остановка у ТРК «Плаза»'}
-                  </button>
-                  <button type="button" onClick={toggleNorthPark} className={hasCustomPark ? glassBtnActive : glassBtn}>
-                    {hasCustomPark ? '✓ Карманный сквер активен' : '+ Разбить сквер на Севере'}
-                  </button>
-                  <button type="button" onClick={toggleNewBuilding} className={hasNewBuilding ? glassBtnActive : glassBtn}>
-                    {hasNewBuilding ? '✓ Корпус «Гагаринский»' : '+ Построить новый ЖК'}
-                  </button>
-                </div>
-              </div>
-              {selectedBuilding && activePath && (
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/60 pt-3 dark:border-white/10" aria-live="polite">
-                  <div className="text-xs text-gray-700 dark:text-gray-200">
-                    <span className="font-bold text-gray-900 dark:text-gray-100">{selectedBuilding.name}:</span>{' '}
-                    {selectedBuilding.floors} эт. • {selectedBuilding.residents} чел. • путь до остановки:{' '}
-                    <span className="font-semibold text-blue-600 dark:text-blue-400">{activePath.distanceM} м ({activePath.timeMinutes} мин)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">Этажность:</span>
-                    <button type="button" onClick={() => changeFloors(-1)} aria-label="Убавить этаж"
-                      className="flex h-7 w-7 items-center justify-center rounded-full border border-white/60 bg-white/70 text-sm font-bold text-gray-800 shadow-sm transition-all duration-200 ease-out hover:scale-[1.1] hover:bg-white active:scale-95 dark:border-white/20 dark:bg-gray-800 dark:text-white">−</button>
-                    <span className="min-w-6 text-center font-mono text-sm font-bold text-gray-900 dark:text-white">{selectedBuilding.floors}</span>
-                    <button type="button" onClick={() => changeFloors(1)} aria-label="Добавить этаж"
-                      className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white shadow-sm transition-all duration-200 ease-out hover:scale-[1.1] hover:bg-blue-700 active:scale-95">+</button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
 
+          {/* Правая панель свойств */}
           <div className="space-y-4 lg:col-span-4">
-            <div className={cardCls}>
-              <h2 className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
-                Показатели качества среды района
-              </h2>
-              <div className="mt-4 space-y-3.5">
-                <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-gray-800/70">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Средний путь до остановки ОТ</p>
-                      <p className="mt-1 text-2xl font-black tracking-tight text-gray-900 dark:text-gray-100">{currentMetrics.weightedAvgBusDistM} м</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Пешком: ~{currentMetrics.weightedAvgBusTimeMin} мин (при 4,5 км/ч)</p>
+            {selectedBuilding ? (
+              <div className="rounded-xl border border-gray-700 bg-[#161c26] p-4 font-mono">
+                <h3 className="border-b border-gray-700 pb-2 text-xs font-bold uppercase text-blue-400">
+                  ПАРАМЕТРЫ ОБЪЕКТА: {selectedBuilding.name}
+                </h3>
+                <div className="mt-3 space-y-3 text-xs">
+                  <div>
+                    <label className="text-gray-400">ИМЕНОВАНИЕ:</label>
+                    <input
+                      type="text"
+                      value={selectedBuilding.name}
+                      onChange={(e) => updateSelectedBuilding({ name: e.target.value })}
+                      className="mt-1 w-full rounded border border-gray-600 bg-gray-900 px-2 py-1 text-gray-100"
+                    />
+                  </div>
+                  <div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">ЭТАЖНОСТЬ:</span>
+                      <span className="font-bold text-gray-100">{selectedBuilding.floors} ЭТ.</span>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                      deltaBusDist <= 0
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                    }`}>{deltaBusDist <= 0 ? `${deltaBusDist} м` : `+${deltaBusDist} м`}</span>
+                    <input
+                      type="range"
+                      min={1}
+                      max={35}
+                      value={selectedBuilding.floors}
+                      onChange={(e) => updateSelectedBuilding({ floors: Number(e.target.value) })}
+                      className="mt-1 w-full accent-blue-500"
+                    />
                   </div>
-                  <div className="mt-2 text-[11px] text-gray-400">Исходный показатель: {baseMetrics.weightedAvgBusDistM} м</div>
-                </div>
-                <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-gray-800/70">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Доступ к паркам (≤ 350 м)</p>
-                      <p className="mt-1 text-2xl font-black tracking-tight text-gray-900 dark:text-gray-100">{currentMetrics.parkAccessPercent}%</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Охват: {currentMetrics.parkCoveredResidents} из {currentMetrics.totalResidents} жителей</p>
+                  <div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">ЖИТЕЛЕЙ НА ЭТАЖ:</span>
+                      <span className="font-bold text-gray-100">{selectedBuilding.residentsPerFloor} ЧЕЛ.</span>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                      deltaParkAccess >= 0
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
-                    }`}>{deltaParkAccess >= 0 ? `+${deltaParkAccess}%` : `${deltaParkAccess}%`}</span>
+                    <input
+                      type="range"
+                      min={4}
+                      max={60}
+                      value={selectedBuilding.residentsPerFloor}
+                      onChange={(e) => updateSelectedBuilding({ residentsPerFloor: Number(e.target.value) })}
+                      className="mt-1 w-full accent-blue-500"
+                    />
                   </div>
-                  <div className="mt-2 text-[11px] text-gray-400">Исходный показатель: {baseMetrics.parkAccessPercent}%</div>
-                </div>
-                <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-gray-800/70">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Безбарьерный доступ</p>
-                      <p className="mt-1 text-xl font-black tracking-tight text-gray-900 dark:text-gray-100">{currentMetrics.mobilityIndex}% домов</p>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Маршруты без надземных/подземных препятствий</p>
-                    </div>
-                    <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-800 dark:bg-blue-950/60 dark:text-blue-300">Норматив</span>
+                  <div className="rounded border border-blue-900 bg-blue-950/40 p-2.5 text-xs text-blue-300">
+                    <div>НАСЕЛЕНИЕ КОРПУСА: <b>{selectedBuilding.residents}</b> чел.</div>
+                    {activePath && (
+                      <div className="mt-1">
+                        КРАТЧАЙШИЙ ПУТЬ К ТРАНСПОРТУ: <b>{activePath.distanceM} м</b> (~{activePath.timeMinutes} мин)
+                      </div>
+                    )}
                   </div>
-                </div>
-                <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-gray-800/70">
-                  <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Затраты на благоустройство</p>
-                  <p className="mt-1 text-xl font-black tracking-tight text-gray-900 dark:text-gray-100">
-                    {currentMetrics.budgetSpentRub.toLocaleString('ru-RU')} ₽
-                  </p>
-                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-                    <div className={`h-full transition-all duration-300 ${currentMetrics.budgetSpentRub > currentMetrics.budgetLimitRub ? 'bg-rose-500' : 'bg-blue-600'}`}
-                      style={{ width: `${budgetRatio}%` }} />
-                  </div>
-                  <p className="mt-2 text-[11px] text-gray-400">
-                    Лимит программы: {currentMetrics.budgetLimitRub.toLocaleString('ru-RU')} ₽ ({budgetRatio}%)
-                    {currentMetrics.budgetSpentRub > currentMetrics.budgetLimitRub ? ' — превышение лимита!' : ''}
-                  </p>
                 </div>
               </div>
-            </div>
-            <div className={cardCls}>
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-200">
-                Обоснование методики (для жюри)
-              </h3>
-              <div className="mt-2.5 space-y-2 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
-                <p>• <b>Честный расчёт графа:</b> алгоритм Дейкстры рассчитывает реальный путь от дверей каждого подъезда до объектов.</p>
-                <p>• <b>Взвешивание по жителям:</b> средняя дистанция учитывает точное количество жильцов на каждом этаже.</p>
-                <p>• <b>Градостроительные нормы:</b> радиус доступности парков 350 м строго по СП 42.13330.2016 «Градостроительство».</p>
+            ) : (
+              <div className="rounded-xl border border-gray-800 bg-[#141822] p-4 text-center font-mono text-xs text-gray-500">
+                ВЫБЕРИТЕ ОБЪЕКТ НА ЧЕРТЕЖЕ ДЛЯ РЕДАКТИРОВАНИЯ
+              </div>
+            )}
+
+            {/* Аудит последствий решений «Было → Стало» */}
+            <div className="rounded-xl border border-gray-700 bg-[#161c26] p-4 font-mono">
+              <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                <h3 className="text-xs font-bold uppercase text-gray-100">
+                  АУДИТ РЕШЕНИЙ (ДЕЙКСТРА)
+                </h3>
+                <span className="text-[10px] text-gray-400">БЫЛО → СТАЛО</span>
+              </div>
+
+              <div className="mt-3 space-y-2.5 text-xs">
+                {/* Метрика 1 */}
+                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
+                  <div className="flex items-center justify-between text-gray-400">
+                    <span>СРЕДНИЙ ПУТЬ ДО ОСТАНОВКИ</span>
+                    <span className={busDelta <= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {busDelta <= 0 ? `▼ ${Math.abs(busDelta)} м` : `▲ +${busDelta} м`}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="text-xl font-bold text-gray-100">{metrics.weightedAvgBusDistM} м</span>
+                    <span className="text-xs text-gray-500 line-through">{baseMetrics.weightedAvgBusDistM} м</span>
+                  </div>
+                </div>
+
+                {/* Метрика 2 */}
+                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
+                  <div className="flex items-center justify-between text-gray-400">
+                    <span>ДОСТУПНОСТЬ ПАРКОВ (≤350М)</span>
+                    <span className={parkDelta >= 0 ? 'text-emerald-400 font-bold' : 'text-rose-400 font-bold'}>
+                      {parkDelta >= 0 ? `▲ +${parkDelta}%` : `▼ ${parkDelta}%`}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="text-xl font-bold text-gray-100">{metrics.parkAccessPercent}%</span>
+                    <span className="text-xs text-gray-500 line-through">{baseMetrics.parkAccessPercent}%</span>
+                  </div>
+                </div>
+
+                {/* Метрика 3 (МГН) */}
+                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
+                  <div className="flex items-center justify-between text-gray-400">
+                    <span>ДОСТУПНОСТЬ ДЛЯ МГН (КОЛЯСКИ)</span>
+                    <span className="font-bold text-blue-400">{metrics.mobilityIndex}%</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500">
+                    Безбарьерные маршруты к узловым точкам
+                  </div>
+                </div>
+
+                {/* Бюджет */}
+                <div className="rounded border border-gray-700 bg-gray-900/80 p-2.5">
+                  <div className="flex items-center justify-between text-gray-400">
+                    <span>ЗАТРАТЫ БЛАГОУСТРОЙСТВА:</span>
+                    <span className="font-bold text-gray-100">{metrics.budgetSpentRub.toLocaleString('ru-RU')} ₽</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-gray-500">
+                    Лимит инвестиций: {metrics.budgetLimitRub.toLocaleString('ru-RU')} ₽
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </main>
+
+      {/* Модалка проектов */}
+      {showProjectsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 font-mono"
+          onClick={() => setShowProjectsModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-lg border border-gray-700 bg-gray-900 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-bold uppercase text-gray-100">СОХРАНЁННЫЕ ПРОЕКТЫ В POSTGRES</h2>
+            <div className="mt-4 max-h-60 space-y-2 overflow-y-auto">
+              {projectsList.length === 0 ? (
+                <p className="text-xs text-gray-500">Проектов нет. Нажмите «Сохранить».</p>
+              ) : (
+                projectsList.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between rounded border border-gray-800 p-2.5 hover:bg-gray-800/50">
+                    <div>
+                      <h4 className="text-xs font-bold text-gray-200">{p.name}</h4>
+                      <p className="text-[10px] text-gray-500">{new Date(p.updatedAt).toLocaleDateString('ru-RU')}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={() => handleLoadProject(p.id)} className={cadBtnActive}>
+                        ОТКРЫТЬ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          if (token) {
+                            await deleteProject(token, p.id);
+                            await refreshProjectsList();
+                          }
+                        }}
+                        className="text-xs text-rose-400 hover:underline"
+                      >
+                        УДАЛИТЬ
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button type="button" onClick={() => setShowProjectsModal(false)} className={cadBtn}>
+                ЗАКРЫТЬ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
