@@ -9,7 +9,7 @@ export interface GraphNode {
   isCustom?: boolean;
 }
 
-export type EdgeType = 'sidewalk' | 'crossing' | 'underpass' | 'park_path' | 'bike_lane';
+export type EdgeType = 'road' | 'sidewalk' | 'crossing' | 'underpass' | 'park_path' | 'bike_lane';
 
 export interface GraphEdge {
   id: string;
@@ -19,6 +19,7 @@ export interface GraphEdge {
   type: EdgeType;
   isActive: boolean;
   isAccessible: boolean;
+  lanes?: number; // количество полос для автодороги
   isCustom?: boolean;
 }
 

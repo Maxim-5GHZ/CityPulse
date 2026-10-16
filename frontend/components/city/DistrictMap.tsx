@@ -1,28 +1,101 @@
 'use client';
 
-import { DistrictScenario, GraphNode, GraphEdge } from '@/lib/city-engine/types';
+import { useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { DistrictScenario, GraphNode, GraphEdge, Building } from '@/lib/city-engine/types';
+
+export type ToolMode =
+  | 'select'
+  | 'road'
+  | 'sidewalk'
+  | 'crossing'
+  | 'building'
+  | 'bus_stop'
+  | 'park'
+  | 'block'
+  | 'delete';
 
 interface DistrictMapProps {
   scenario: DistrictScenario;
   selectedBuildingId: string | null;
-  onSelectBuilding: (buildingId: string) => void;
+  onSelectBuilding: (buildingId: string | null) => void;
   activePathNodeIds: string[];
-  onToggleCrossing: () => void;
-  onToggleStop: () => void;
-  onToggleBlock: (edgeId: string) => void;
-  hasCustomCrossing: boolean;
-  busStopNodeId: string;
-  hasCustomPark: boolean;
-  onToggleNewBuilding?: () => void;
-  hasNewBuilding?: boolean;
+  toolMode: ToolMode;
+  onAddRoad: (x1: number, y1: number, x2: number, y2: number, type?: 'road' | 'sidewalk' | 'crossing') => void;
+  onAddBuilding: (x: number, y: number) => void;
+  onAddAmenity: (type: 'bus_stop' | 'park', x: number, y: number) => void;
+  onAddCrossingDirect: (edgeId: string, px: number, py: number) => void;
+  onToggleBlockEdge: (id: string) => void;
+  onDeleteBuilding: (id: string) => void;
+  onDeleteEdge: (id: string) => void;
+  onDeleteAmenity: (id: string) => void;
 }
 
 export default function DistrictMap({
-  scenario, selectedBuildingId, onSelectBuilding, activePathNodeIds,
-  onToggleCrossing, onToggleStop, onToggleBlock, hasCustomCrossing,
-  busStopNodeId, hasCustomPark, onToggleNewBuilding, hasNewBuilding,
+  scenario,
+  selectedBuildingId,
+  onSelectBuilding,
+  activePathNodeIds,
+  toolMode,
+  onAddRoad,
+  onAddBuilding,
+  onAddAmenity,
+  onAddCrossingDirect,
+  onToggleBlockEdge,
+  onDeleteBuilding,
+  onDeleteEdge,
+  onDeleteAmenity,
 }: DistrictMapProps) {
+  const [roadStart, setRoadStart] = useState<{ x: number; y: number } | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+
   const nodeMap = new Map<string, GraphNode>(scenario.nodes.map((n) => [n.id, n]));
+
+  const snapToNode = (x: number, y: number): { x: number; y: number } => {
+    for (const node of scenario.nodes) {
+      if (Math.hypot(node.x - x, node.y - y) <= 22) {
+        return { x: node.x, y: node.y };
+      }
+    }
+    return { x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 };
+  };
+
+  const getSvgCoordinates = (e: ReactMouseEvent<SVGSVGElement>): { x: number; y: number } => {
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 960;
+    const y = ((e.clientY - rect.top) / rect.height) * 620;
+    return snapToNode(x, y);
+  };
+
+  const isLinearTool = toolMode === 'road' || toolMode === 'sidewalk';
+
+  const handleSvgClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const coords = getSvgCoordinates(e);
+
+    if (isLinearTool) {
+      if (!roadStart) {
+        setRoadStart(coords);
+      } else {
+        if (Math.hypot(roadStart.x - coords.x, roadStart.y - coords.y) > 15) {
+          onAddRoad(roadStart.x, roadStart.y, coords.x, coords.y, toolMode);
+        }
+        setRoadStart(null);
+      }
+    } else if (toolMode === 'building') {
+      onAddBuilding(coords.x - 42, coords.y - 25);
+    } else if (toolMode === 'bus_stop') {
+      onAddAmenity('bus_stop', coords.x, coords.y);
+    } else if (toolMode === 'park') {
+      onAddAmenity('park', coords.x, coords.y);
+    } else if (toolMode === 'select') {
+      onSelectBuilding(null);
+    }
+  };
+
+  const handleMouseMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const coords = getSvgCoordinates(e);
+    setMousePos(coords);
+  };
 
   const isSegmentActive = (u: string, v: string) => {
     const idxU = activePathNodeIds.indexOf(u);
@@ -30,178 +103,287 @@ export default function DistrictMap({
     return idxU !== -1 && idxV !== -1 && Math.abs(idxU - idxV) === 1;
   };
 
-  const trees = [
-    { cx: 200, cy: 470, r: 16 },
-    { cx: 230, cy: 520, r: 20 },
-    { cx: 270, cy: 465, r: 18 },
-    { cx: 330, cy: 540, r: 22 },
-    { cx: 380, cy: 490, r: 19 },
-    { cx: 410, cy: 460, r: 17 },
-  ];
-
   return (
-    <div className="relative w-full overflow-hidden rounded-[28px] border border-white/60 bg-[#E8ECEF] shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_20px_50px_-16px_rgba(20,26,38,0.25)] dark:border-white/20 dark:bg-[#1E293B]">
-      <div className="absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 rounded-full border border-white/60 bg-white/80 px-3.5 py-1.5 text-xs text-gray-700 shadow-sm backdrop-blur-xl dark:border-white/20 dark:bg-gray-800/80 dark:text-gray-200">
-        <span className="font-semibold text-gray-900 dark:text-gray-100">2D Генплан: 51-й мкр Обнинска</span>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <span className="text-gray-500 dark:text-gray-400">Масштаб 1:1000</span>
-        <span className="text-gray-300 dark:text-gray-600">|</span>
-        <span className="flex items-center gap-1.5 font-medium text-blue-600 dark:text-blue-400">
-          <span className="inline-block h-2 w-2 rounded-full bg-blue-600" />
-          Маршрут выбранного жителя
-        </span>
+    <div className="relative w-full overflow-hidden rounded-xl border border-gray-300 bg-[#1e2430] shadow-md dark:border-gray-700">
+      {/* Статусная панель САПР сверху */}
+      <div className="flex h-8 items-center justify-between border-b border-gray-700/80 bg-[#161a22] px-3 font-mono text-[11px] text-gray-300 select-none">
+        <div className="flex items-center gap-4">
+          <span className="text-gray-400">САПР-СЕТКА: 10px</span>
+          <span className="text-blue-400 font-semibold uppercase">
+            РЕЖИМ: {
+              toolMode === 'select' ? 'ВЫБОР ОБЪЕКТА [ESC]' :
+              toolMode === 'road' ? 'ТРАССИРОВКА АВТОДОРОГИ' :
+              toolMode === 'sidewalk' ? 'УКЛАДКА ТРОТУАРА С БОРДЮРОМ' :
+              toolMode === 'crossing' ? 'ПЕРЕХОД В 1 КЛИК ПО ДОРОГЕ' :
+              toolMode === 'block' ? 'ПЕРЕКРЫТИЕ / РЕМОНТ ПУТИ' :
+              toolMode === 'building' ? 'РАЗМЕЩЕНИЕ ЗДАНИЯ' :
+              toolMode === 'bus_stop' ? 'УСТАНОВКА ПАВИЛЬОНА ОСТАНОВКИ' :
+              toolMode === 'park' ? 'РАЗБИВКА СКВЕРА' : 'ДЕМОНТАЖ ОБЪЕКТА'
+            }
+          </span>
+        </div>
+        <div>
+          X: <span className="text-emerald-400">{mousePos?.x ?? 0}</span> | Y: <span className="text-emerald-400">{mousePos?.y ?? 0}</span>
+        </div>
       </div>
 
-      <svg viewBox="0 0 960 620" className="h-auto w-full select-none" style={{ minHeight: '520px' }} role="img" aria-label="Генплан 51-го микрорайона Обнинска">
-        <rect width="960" height="620" fill="#E8ECEF" />
+      <svg
+        viewBox="0 0 960 620"
+        className="h-auto w-full cursor-crosshair select-none"
+        style={{ minHeight: '520px' }}
+        onClick={handleSvgClick}
+        onMouseMove={handleMouseMove}
+        role="img"
+        aria-label="САПР чертёж городского района"
+      >
+        <defs>
+          {/* Инженерная координатная сетка */}
+          <pattern id="cad-grid-sm" width="20" height="20" patternUnits="userSpaceOnUse">
+            <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#2a3242" strokeWidth="0.5" />
+          </pattern>
+          <pattern id="cad-grid-lg" width="100" height="100" patternUnits="userSpaceOnUse">
+            <rect width="100" height="100" fill="url(#cad-grid-sm)" />
+            <path d="M 100 0 L 0 0 0 100" fill="none" stroke="#374358" strokeWidth="1" />
+          </pattern>
+          {/* Штриховка ремонтной блокировки */}
+          <pattern id="blocked-pattern" width="16" height="16" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+            <rect width="8" height="16" fill="#dc2626" />
+            <rect x="8" width="8" height="16" fill="#fef2f2" />
+          </pattern>
+        </defs>
 
-        <g>
-          <rect x="180" y="420" width="250" height="170" rx="16" fill="#C5D9BF" stroke="#9EBD95" strokeWidth="1.5" />
-          <text x="195" y="445" fill="#3B6347" fontSize="11" fontWeight="700" letterSpacing="0.5">
-            СКВЕР ИМ. КУДРЯВЦЕВОЙ
-          </text>
-          {trees.map((tree, i) => (
-            <g key={i}>
-              <circle cx={tree.cx + 2} cy={tree.cy + 3} r={tree.r} fill="#97AB92" opacity="0.3" />
-              <circle cx={tree.cx} cy={tree.cy} r={tree.r} fill="#7A9A74" stroke="#688762" strokeWidth="1.5" />
-              <circle cx={tree.cx} cy={tree.cy} r={tree.r * 0.45} fill="#4D7C5F" opacity="0.6" />
-            </g>
-          ))}
-        </g>
+        <rect width="960" height="620" fill="#141822" />
+        <rect width="960" height="620" fill="url(#cad-grid-lg)" />
 
-        {hasCustomPark && (
-          <g>
-            <rect x="180" y="40" width="120" height="90" rx="12" fill="#C5D9BF" stroke="#9EBD95" strokeWidth="1.5" />
-            <text x="190" y="60" fill="#3B6347" fontSize="10" fontWeight="700">НОВЫЙ СКВЕР</text>
-            <circle cx="210" cy="85" r="14" fill="#7A9A74" />
-            <circle cx="260" cy="95" r="16" fill="#7A9A74" />
-          </g>
-        )}
+        {/* Парки */}
+        {scenario.amenities
+          .filter((a) => a.type === 'park')
+          .map((park) => {
+            const node = nodeMap.get(park.nodeId);
+            if (!node) return null;
+            return (
+              <g
+                key={park.id}
+                className="cursor-pointer"
+                onClick={(e) => {
+                  if (toolMode === 'delete') {
+                    e.stopPropagation();
+                    onDeleteAmenity(park.id);
+                  }
+                }}
+              >
+                <circle cx={node.x} cy={node.y} r="50" fill="#1b3d2f" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
+                <circle cx={node.x - 12} cy={node.y - 10} r="16" fill="#2d6a4f" opacity="0.8" />
+                <circle cx={node.x + 14} cy={node.y + 12} r="18" fill="#1e4d38" opacity="0.8" />
+                <rect x={node.x - 45} y={node.y + 36} width="90" height="16" rx="3" fill="#0b1e16" stroke="#2d6a4f" strokeWidth="1" />
+                <text x={node.x} y={node.y + 48} textAnchor="middle" fill="#a7f3d0" fontSize="9.5" fontFamily="monospace" fontWeight="700">
+                  {park.name}
+                </text>
+              </g>
+            );
+          })}
 
-        <g>
-          <rect x="524" y="424" width="230" height="150" rx="8" fill="#000000" opacity="0.08" />
-          <rect x="520" y="420" width="230" height="150" rx="8" fill="#D3D9DE" stroke="#9AA5B1" strokeWidth="2" />
-          <rect x="560" y="455" width="150" height="70" rx="6" fill="#BAE6FD" stroke="#7DD3FC" strokeWidth="1.5" />
-          <text x="635" y="490" textAnchor="middle" fill="#0369A1" fontSize="12" fontWeight="800" letterSpacing="0.8">
-            ТРК «ТРИУМФ ПЛАЗА»
-          </text>
-          <text x="635" y="508" textAnchor="middle" fill="#0284C7" fontSize="10" fontWeight="600">
-            Главный пересадочный узел
-          </text>
-        </g>
-
-        <g>
-          <rect x="760" y="20" width="80" height="580" fill="#3B4759" />
-          <line x1="800" y1="20" x2="800" y2="600" stroke="#94A3B8" strokeWidth="1.5" strokeDasharray="16 12" />
-          <text x="825" y="160" fill="#CBD5E1" fontSize="11" fontWeight="700" letterSpacing="2" transform="rotate(90, 825, 160)">
-            УЛИЦА ГАГАРИНА
-          </text>
-        </g>
-
-        <g>
-          <rect x="20" y="270" width="920" height="120" fill="#334155" />
-          <line x1="20" y1="330" x2="940" y2="330" stroke="#CBD5E1" strokeWidth="2" strokeDasharray="16 12" />
-          <line x1="20" y1="300" x2="940" y2="300" stroke="#64748B" strokeWidth="1.2" strokeDasharray="12 16" />
-          <line x1="20" y1="360" x2="940" y2="360" stroke="#64748B" strokeWidth="1.2" strokeDasharray="12 16" />
-          <text x="50" y="320" fill="#CBD5E1" fontSize="11" fontWeight="700" letterSpacing="2.5" opacity="0.9">
-            ПРОСПЕКТ МАРКСА
-          </text>
-        </g>
-
-        {!hasNewBuilding && onToggleNewBuilding && (
-          <g className="cursor-pointer" onClick={onToggleNewBuilding}>
-            <rect x="760" y="40" width="80" height="60" rx="8" fill="#FEF08A" stroke="#EAB308" strokeWidth="2" strokeDasharray="4 3" opacity="0.8" />
-            <text x="800" y="65" textAnchor="middle" fill="#854D0E" fontSize="9" fontWeight="700">+ СТРОИТЕЛЬСТВО</text>
-            <text x="800" y="82" textAnchor="middle" fill="#A16207" fontSize="8" fontWeight="600">Новый корпус</text>
-          </g>
-        )}
-
+        {/* Дороги, тротуары с бордюрами, переходы */}
         {scenario.edges.map((edge: GraphEdge) => {
           const from = nodeMap.get(edge.from);
           const to = nodeMap.get(edge.to);
           if (!from || !to) return null;
+
+          const isCarRoad = edge.type === 'road';
+          const isCrossing = edge.type === 'crossing';
+          const isBlocked = !edge.isActive;
           const isActiveInPath = isSegmentActive(edge.from, edge.to);
-          if (edge.type === 'sidewalk' || edge.type === 'park_path' || edge.type === 'bike_lane' || edge.type === 'underpass') {
-            return (
-              <g key={edge.id} className="cursor-pointer" onClick={() => onToggleBlock(edge.id)}>
-                <title>{`${edge.lengthM} м${edge.isActive ? '' : ' (перекрыто)'}`}</title>
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-                  stroke={edge.type === 'park_path' ? '#A3B899' : '#D1D5DB'}
-                  strokeWidth={edge.isActive ? 6 : 4} strokeLinecap="round" />
-                {!edge.isActive && (
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#DC2626" strokeWidth={3} strokeDasharray="6 4" strokeLinecap="round" />
-                )}
-                {isActiveInPath && (
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2563EB" strokeWidth={4.5} strokeDasharray="6 4" strokeLinecap="round" />
-                )}
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth={16} />
-              </g>
-            );
-          }
-          if (edge.type === 'crossing') {
-            return (
-              <g key={edge.id} className="cursor-pointer" onClick={onToggleCrossing}>
-                <title>Пешеходный переход</title>
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#FFFFFF" strokeWidth={14} strokeDasharray="4 6" strokeLinecap="butt" />
-                <rect x={from.x - 7} y={from.y - 7} width="14" height="14" rx="3" fill="#1D4ED8" stroke="#FFFFFF" strokeWidth="1.5" />
-                <rect x={to.x - 7} y={to.y - 7} width="14" height="14" rx="3" fill="#1D4ED8" stroke="#FFFFFF" strokeWidth="1.5" />
-                {isActiveInPath && (
-                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2563EB" strokeWidth={4} strokeDasharray="4 4" />
-                )}
-              </g>
-            );
-          }
-          return null;
+
+          const dx = to.x - from.x;
+          const dy = to.y - from.y;
+          const len = Math.hypot(dx, dy);
+          const nx = len > 0 ? -dy / len : 0;
+          const ny = len > 0 ? dx / len : 0;
+
+          return (
+            <g
+              key={edge.id}
+              className="cursor-pointer"
+              onClick={(e) => {
+                if (toolMode === 'crossing' && isCarRoad) {
+                  e.stopPropagation();
+                  onAddCrossingDirect(edge.id, (from.x + to.x) / 2, (from.y + to.y) / 2);
+                } else if (toolMode === 'block') {
+                  e.stopPropagation();
+                  onToggleBlockEdge(edge.id);
+                } else if (toolMode === 'delete') {
+                  e.stopPropagation();
+                  onDeleteEdge(edge.id);
+                }
+              }}
+            >
+              {/* Проезжая часть автодороги */}
+              {isCarRoad && (
+                <>
+                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#2a3242" strokeWidth={24} strokeLinecap="round" />
+                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#1b212c" strokeWidth={20} strokeLinecap="round" />
+                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#64748b" strokeWidth={1.5} strokeDasharray="10 8" />
+                </>
+              )}
+
+              {/* Пешеходный переход */}
+              {isCrossing && (
+                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#ffffff" strokeWidth={12} strokeDasharray="5 7" strokeLinecap="butt" />
+              )}
+
+              {/* Тротуар с бордюрами */}
+              {!isCarRoad && !isCrossing && (
+                <>
+                  {/* Бордюр слева */}
+                  <line
+                    x1={from.x + nx * 4.5}
+                    y1={from.y + ny * 4.5}
+                    x2={to.x + nx * 4.5}
+                    y2={to.y + ny * 4.5}
+                    stroke="#94a3b8"
+                    strokeWidth={1}
+                  />
+                  {/* Полотно пешеходной дорожки */}
+                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#475569" strokeWidth={8} strokeLinecap="round" />
+                  {/* Бордюр справа */}
+                  <line
+                    x1={from.x - nx * 4.5}
+                    y1={from.y - ny * 4.5}
+                    x2={to.x - nx * 4.5}
+                    y2={to.y - ny * 4.5}
+                    stroke="#94a3b8"
+                    strokeWidth={1}
+                  />
+                </>
+              )}
+
+              {/* Визуализация перекрытия/ремонта */}
+              {isBlocked && (
+                <>
+                  <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="url(#blocked-pattern)" strokeWidth={16} strokeLinecap="round" />
+                  <circle cx={(from.x + to.x) / 2} cy={(from.y + to.y) / 2} r="10" fill="#dc2626" stroke="#ffffff" strokeWidth="2" />
+                  <rect x={(from.x + to.x) / 2 - 6} y={(from.y + to.y) / 2 - 2} width="12" height="4" fill="#ffffff" rx="1" />
+                </>
+              )}
+
+              {/* Подсветка маршрута Дейкстры */}
+              {isActiveInPath && !isBlocked && (
+                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#3b82f6" strokeWidth={4.5} strokeDasharray="6 4" strokeLinecap="round" />
+              )}
+
+              {/* Невидимая полоса для легкого клика */}
+              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="transparent" strokeWidth="26" />
+            </g>
+          );
         })}
 
-        {!hasCustomCrossing && (
-          <g className="cursor-pointer opacity-70 transition-opacity hover:opacity-100" onClick={onToggleCrossing}>
-            <line x1="440" y1="260" x2="440" y2="400" stroke="#94A3B8" strokeWidth="10" strokeDasharray="4 6" />
-            <rect x="350" y="315" width="180" height="28" rx="8" fill="#1E293B" stroke="#475569" strokeWidth="1" />
-            <text x="440" y="333" textAnchor="middle" fill="#F8FAFC" fontSize="10" fontWeight="700">+ УСТАНОВИТЬ ПЕРЕХОД</text>
-          </g>
+        {/* Предпросмотр протяжки дороги/тротуара */}
+        {isLinearTool && roadStart && mousePos && (
+          <line
+            x1={roadStart.x}
+            y1={roadStart.y}
+            x2={mousePos.x}
+            y2={mousePos.y}
+            stroke={toolMode === 'road' ? '#60a5fa' : '#93c5fd'}
+            strokeWidth={toolMode === 'road' ? 18 : 8}
+            strokeDasharray="6 4"
+            strokeLinecap="round"
+          />
         )}
 
-        {scenario.buildings.map((b) => {
+        {/* Дома */}
+        {scenario.buildings.map((b: Building) => {
           const isSelected = selectedBuildingId === b.id;
           return (
-            <g key={b.id} className="cursor-pointer" onClick={() => onSelectBuilding(b.id)}>
-              <title>{`${b.name}, ${b.residents} жителей (${b.floors} эт.)`}</title>
-              <rect x={b.x + 3} y={b.y + 4} width={b.width} height={b.height} rx={6} fill="#000000" opacity={isSelected ? 0.25 : 0.1} />
-              <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={6}
-                fill={isSelected ? '#EFF6FF' : (b.isCustom ? '#FEF08A' : '#FFFFFF')}
-                stroke={isSelected ? '#2563EB' : '#94A3B8'} strokeWidth={isSelected ? 3 : 1} />
-              <line x1={b.x + 8} y1={b.y + b.height / 2} x2={b.x + b.width - 8} y2={b.y + b.height / 2} stroke="#CBD5E1" strokeWidth="1" />
-              <text x={b.x + b.width / 2} y={b.y + 19} textAnchor="middle" fill={isSelected ? '#1D4ED8' : '#1E293B'} fontSize="10.5" fontWeight="700">
+            <g
+              key={b.id}
+              className="cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (toolMode === 'delete') {
+                  onDeleteBuilding(b.id);
+                } else {
+                  onSelectBuilding(b.id);
+                }
+              }}
+            >
+              <rect
+                x={b.x}
+                y={b.y}
+                width={b.width}
+                height={b.height}
+                rx={4}
+                fill={isSelected ? '#1e3a8a' : '#1e293b'}
+                stroke={isSelected ? '#60a5fa' : '#475569'}
+                strokeWidth={isSelected ? 2.5 : 1}
+              />
+              <text
+                x={b.x + b.width / 2}
+                y={b.y + b.height / 2 - 4}
+                textAnchor="middle"
+                fill={isSelected ? '#bfdbfe' : '#f1f5f9'}
+                fontSize="10"
+                fontFamily="monospace"
+                fontWeight="700"
+              >
                 {b.name}
               </text>
-              <text x={b.x + b.width / 2} y={b.y + 35} textAnchor="middle" fill="#64748B" fontSize="9.5" fontWeight="600">
-                {b.floors} эт. • {b.residents} жит.
+              <text
+                x={b.x + b.width / 2}
+                y={b.y + b.height / 2 + 11}
+                textAnchor="middle"
+                fill="#94a3b8"
+                fontSize="8.5"
+                fontFamily="monospace"
+              >
+                {b.floors} эт • {b.residents} чел
               </text>
             </g>
           );
         })}
 
-        {(() => {
-          const stopNode = nodeMap.get(busStopNodeId);
-          if (!stopNode) return null;
-          return (
-            <g className="cursor-pointer" onClick={onToggleStop}>
-              <title>Остановка общественного транспорта</title>
-              <rect x={stopNode.x - 32} y={stopNode.y - 12} width="64" height="24" rx="6" fill="#334155" stroke="#94A3B8" strokeWidth="1.5" />
-              <rect x={stopNode.x - 24} y={stopNode.y - 8} width="48" height="12" rx="3" fill="#0F172A" />
-              <circle cx={stopNode.x} cy={stopNode.y - 20} r="9" fill="#2563EB" stroke="#FFFFFF" strokeWidth="1.8" />
-              <text x={stopNode.x} y={stopNode.y - 16} textAnchor="middle" fill="#FFFFFF" fontSize="10" fontWeight="800">A</text>
-              <text x={stopNode.x} y={stopNode.y + 24} textAnchor="middle" fill="#1E293B" fontSize="10" fontWeight="700">Остановка ОТ</text>
-            </g>
-          );
-        })()}
+        {/* Остановки транспорта */}
+        {scenario.amenities
+          .filter((a) => a.type === 'bus_stop')
+          .map((bus) => {
+            const node = nodeMap.get(bus.nodeId);
+            if (!node) return null;
+            return (
+              <g
+                key={bus.id}
+                className="cursor-pointer"
+                onClick={(e) => {
+                  if (toolMode === 'delete') {
+                    e.stopPropagation();
+                    onDeleteAmenity(bus.id);
+                  }
+                }}
+              >
+                <circle cx={node.x} cy={node.y} r="12" fill="#2563eb" stroke="#ffffff" strokeWidth="2" />
+                <text x={node.x} y={node.y + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9.5" fontFamily="monospace" fontWeight="900">
+                  А
+                </text>
+                <rect x={node.x - 30} y={node.y + 16} width="60" height="14" rx="2" fill="#0f172a" stroke="#3b82f6" strokeWidth="0.8" />
+                <text x={node.x} y={node.y + 26} textAnchor="middle" fill="#93c5fd" fontSize="8" fontFamily="monospace">
+                  ОСТАНОВКА
+                </text>
+              </g>
+            );
+          })}
 
+        {/* Узлы графа */}
         {scenario.nodes.map((node) => {
           const isSelectedPath = activePathNodeIds.includes(node.id);
           return (
-            <circle key={node.id} cx={node.x} cy={node.y} r={isSelectedPath ? 4.5 : 2.5}
-              fill={isSelectedPath ? '#2563EB' : '#94A3B8'} stroke="#FFFFFF" strokeWidth={1} />
+            <circle
+              key={node.id}
+              cx={node.x}
+              cy={node.y}
+              r={isSelectedPath ? 5 : 3}
+              fill={isSelectedPath ? '#3b82f6' : '#64748b'}
+              stroke="#0f172a"
+              strokeWidth={1}
+            />
           );
         })}
       </svg>

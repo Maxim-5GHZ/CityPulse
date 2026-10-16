@@ -103,10 +103,10 @@ export default function PresentationPage() {
   const slides: Slide[] = [
     {
       id: 'hero',
-      badge: 'О проекте',
-      title: 'Пульс твоего города',
+      badge: 'КЕЙС 03: ОБНИНСК 2040',
+      title: 'Конструктор города будущего',
       subtitle:
-        'CityPulse собирает жизнь города в одном месте: места, события и настроения.',
+        'Интерактивный САПР и аудит пешеходной доступности на базе алгоритма Дейкстры и цифрового 3D-двойника района.',
       content: (
         <div className={`${cardCls} flex flex-col items-center gap-5`}>
           <div className="mx-auto flex justify-center">
