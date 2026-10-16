@@ -70,10 +70,10 @@ export const OBNINSK_MARX_DISTRICT: DistrictScenario = {
     { id: 'b1', name: 'пр. Маркса, 74', address: 'г. Обнинск, пр. Маркса, 74', floors: 9, residentsPerFloor: 31, residents: 279, gateNodeId: 'n1', x: 80, y: 60, width: 85, height: 50 },
     { id: 'b2', name: 'пр. Маркса, 70', address: 'г. Обнинск, пр. Маркса, 70', floors: 9, residentsPerFloor: 38, residents: 342, gateNodeId: 'n2', x: 240, y: 60, width: 85, height: 50 },
     { id: 'b3', name: 'ЖК «Циолковский»', address: 'г. Обнинск, пр. Маркса', floors: 22, residentsPerFloor: 36, residents: 792, gateNodeId: 'n3', x: 400, y: 40, width: 95, height: 65 },
-    { id: 'b4', name: 'ул. Гагарина, 15', address: 'г. Обнинск, ул. Гагарина, 15', floors: 12, residentsPerFloor: 32, residents: 384, gateNodeId: 'n4', x: 610, y: 60, width: 80, height: 50 },
+    { id: 'b4', name: 'ул. Гагарина, 15', address: 'г. Обнинск, ул. Гагарина, 15', floors: 12, residentsPerFloor: 32, residents: 384, gateNodeId: 'n4', x: 610, y: 60, width: 80, height: 50, rotationDeg: 22 },
     { id: 'b5', name: 'пр. Маркса, 61', address: 'г. Обнинск, пр. Маркса, 61', floors: 9, residentsPerFloor: 32, residents: 288, gateNodeId: 'n16', x: 80, y: 540, width: 85, height: 50 },
     { id: 'b6', name: 'ул. Энгельса, 14', address: 'г. Обнинск, ул. Энгельса, 14', floors: 14, residentsPerFloor: 32, residents: 448, gateNodeId: 'n18', x: 460, y: 540, width: 85, height: 50 },
-    { id: 'b7', name: 'ул. Энгельса, 20', address: 'г. Обнинск, ул. Энгельса, 20', floors: 12, residentsPerFloor: 31, residents: 372, gateNodeId: 'n19', x: 700, y: 540, width: 85, height: 50 },
+    { id: 'b7', name: 'ул. Энгельса, 20', address: 'г. Обнинск, ул. Энгельса, 20', floors: 12, residentsPerFloor: 31, residents: 372, gateNodeId: 'n19', x: 700, y: 540, width: 85, height: 50, rotationDeg: -15 },
   ],
   amenities: [
     { id: 'a-bus-plaza', name: 'Ост. ТРК «Плаза»', type: 'bus_stop', nodeId: 'n14', coverageRadiusM: 500 },

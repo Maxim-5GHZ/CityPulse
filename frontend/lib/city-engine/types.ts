@@ -41,6 +41,7 @@ export interface Building {
   width: number;
   height: number;
   polygon?: { x: number; y: number }[]; // Произвольный полигональный контур
+  rotationDeg?: number; // Поворот корпуса вдоль улицы (органичная застройка)
   isCustom?: boolean;
 }
 
