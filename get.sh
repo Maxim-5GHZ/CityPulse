@@ -7,7 +7,10 @@ OUTPUT_FILE="all_code.txt"
 > "$OUTPUT_FILE"
 
 find . -type f \( \
-   -name "*.ts" -o -name "*.tsx" \
+  -name "*.ts" -o -name "*.tsx" \
+    -o -name "Dockerfile*" \
+    -o -name "docker-compose*.yml" \
+    -o -name "*.java" \
     -o -name "AGENTS.md" \
   \) \
   -not -path "./.git/*" \
