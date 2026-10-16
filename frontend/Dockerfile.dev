@@ -1,7 +1,9 @@
 FROM node:20-alpine
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+# npm ci вместо install: строго по lock-файлу, быстрее и детерминированно.
+# Кеш слоя живёт пока не изменились package*.json — код его не инвалидирует.
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 COPY . .
 EXPOSE 3000
 CMD ["npm", "run", "dev"]

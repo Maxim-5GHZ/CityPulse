@@ -1,8 +1,9 @@
 # PROD: standalone SSR (next.config.js: output standalone).
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm install
+COPY package.json package-lock.json ./
+# npm ci вместо install: строго по lock-файлу, кеш переживает пересборки.
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund
 
 FROM node:20-alpine AS builder
 WORKDIR /app

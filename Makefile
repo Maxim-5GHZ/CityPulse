@@ -1,8 +1,14 @@
-.PHONY: dev prod down down-prod logs logs-prod clean certs
+.PHONY: dev build prod down down-prod logs logs-prod clean certs
 
 # DEV: без SSL, с hot reload (Java + JS). Ctrl+C чтобы остановить.
+# Без --build: образы пересобираются только через `make build`, иначе каждый
+# `make dev` вечно качает зависимости (npm/maven) заново.
 dev:
-	docker compose up --build
+	docker compose up
+
+# Пересобрать образы (после смены Dockerfile, package.json, pom.xml).
+build:
+	docker compose build
 
 # PROD: с SSL через nginx. Серты сгенерируются сами при первом запуске.
 prod: certs

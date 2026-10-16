@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 import ru.citypulse.backend.domain.User;
 import ru.citypulse.backend.repository.UserRepository;
 
-/** Сид админа на старте: берёт APP_ADMIN_EMAIL/PASSWORD из .env. Пустой email = не создавать. */
+/** Сид админа на старте: берёт APP_ADMIN_EMAIL/PASSWORD только из ENV. Пусто = не создавать. */
 @Component
 @RequiredArgsConstructor
 public class AdminBootstrap implements CommandLineRunner {
@@ -22,24 +22,25 @@ public class AdminBootstrap implements CommandLineRunner {
   @Value("${app.admin-email:}")
   private String adminEmail;
 
-  @Value("${app.admin-password:admin}")
+  @Value("${app.admin-password:}")
   private String adminPassword;
 
   @Override
   public void run(String... args) {
-    if (adminEmail == null || adminEmail.isBlank()) {
+    if (adminEmail == null || adminEmail.isBlank()
+        || adminPassword == null || adminPassword.isBlank()) {
+      log.warn("APP_ADMIN_EMAIL/PASSWORD не заданы — админ не создан, /admin недоступна");
       return;
     }
     String email = adminEmail.toLowerCase().trim();
     if (users.findByEmail(email).isPresent()) {
       return;
     }
+    if ("admin".equals(adminPassword)) {
+      log.warn("APP_ADMIN_PASSWORD слишком простой — задайте сложный пароль в .env!");
+    }
     users.save(User.builder().email(email).role("ADMIN")
         .passwordHash(encoder.encode(adminPassword)).build());
-    if ("admin".equals(adminPassword)) {
-      log.warn("Создан админ {}/admin — задайте APP_ADMIN_PASSWORD в .env!", email);
-    } else {
-      log.info("Создан администратор {}", email);
-    }
+    log.info("Создан администратор {}", email);
   }
 }

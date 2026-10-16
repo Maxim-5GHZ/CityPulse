@@ -7,6 +7,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends inotify-tools \
   && rm -rf /var/lib/apt/lists/*
 COPY pom.xml ./
-RUN mvn -q dependency:go-offline
+# Кеш зависимостей: слой живёт пока не изменился pom.xml.
+# В compose поверх монтируется maven-repo (/root/.m2), так что повторные
+# сборки почти ничего не качают.
+RUN --mount=type=cache,target=/root/.m2 mvn -q -DskipTests dependency:go-offline
 EXPOSE 8080
 CMD ["sh","-c","(while true; do inotifywait -q -r -e modify,create,delete,move --exclude 'target/' src/ pom.xml; mvn -q -DskipTests compile; done) & exec mvn -DskipTests compile spring-boot:run"]

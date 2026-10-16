@@ -14,11 +14,11 @@ import { HEADER_LOGO_LINK_CLS, HEADER_PILL_CLS } from '@/components/headerStyle'
  */
 const NAV_ITEMS: { href: string; label: string }[] = [];
 
-/** Пункт шторки/меню: только `hover:bg`, без scale (иначе дёргается список). */
+/** Пункт шторки/меню: общий интерактив — как всё кликабельное. */
 const MENU_ITEM_CLS =
-  'flex w-full items-center rounded-xl px-3 py-2 text-left text-sm font-medium ' +
-  'text-gray-700 transition-colors hover:bg-white/60 active:bg-white/80 ' +
-  'dark:text-gray-200 dark:hover:bg-white/10';
+  'flex w-full transform-gpu items-center rounded-xl px-3 py-2 text-left text-sm font-medium ' +
+  'text-gray-700 transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-white/60 active:scale-[0.98] active:bg-white/80 ' +
+  'motion-reduce:transform-none motion-reduce:transition-none dark:text-gray-200 dark:hover:bg-white/10';
 
 const DIVIDER_CLS = 'my-1 border-t border-white/70 dark:border-white/20';
 
@@ -32,7 +32,7 @@ const DIVIDER_CLS = 'my-1 border-t border-white/70 dark:border-white/20';
  * скролл страницы лочится); на десктопе — дропдаун у кнопки.
  */
 export default function AppHeader() {
-  const { email, logout } = useAuth();
+  const { email, role, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -181,6 +181,11 @@ export default function AppHeader() {
                 className="absolute right-0 top-full mt-2 hidden w-56 origin-top-right rounded-2xl border border-white/60 bg-white/70 p-1.5 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_24px_60px_-16px_rgba(20,26,38,0.35)] backdrop-blur-xl backdrop-saturate-150 transition-all duration-150 ease-out motion-reduce:transition-none md:block dark:border-white/20 dark:bg-gray-900/70"
               >
                 {accountBlock}
+                {role === 'ADMIN' && (
+                  <Link href="/admin" role="menuitem" onClick={close} className={MENU_ITEM_CLS}>
+                    Админка
+                  </Link>
+                )}
                 <div className={DIVIDER_CLS} />
                 <button
                   // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -237,6 +242,11 @@ export default function AppHeader() {
               </p>
             )}
             <div className={DIVIDER_CLS} />
+            {role === 'ADMIN' && (
+              <Link href="/admin" role="menuitem" onClick={close} className={MENU_ITEM_CLS}>
+                Админка
+              </Link>
+            )}
             {NAV_ITEMS.length > 0 && (
               <>
                 {sheetNav}

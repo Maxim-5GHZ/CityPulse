@@ -1,10 +1,13 @@
 // Тонкий клиент бэкенда через same-origin прокси /backend/* (см. next.config.js).
 // Токен — из localStorage, 401 дальше решает вызывающий код.
+// Формат ошибок бэка: {message, fieldErrors?} (см. GlobalExceptionHandler).
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  fieldErrors: Record<string, string> | null;
+  constructor(status: number, message: string, fieldErrors?: Record<string, string> | null) {
     super(message);
     this.status = status;
+    this.fieldErrors = fieldErrors ?? null;
   }
 }
 
@@ -29,11 +32,9 @@ async function req<T>(
     data = null;
   }
   if (!res.ok) {
-    const msg =
-      (data as { message?: string; error?: string } | null)?.message ??
-      (data as { error?: string } | null)?.error ??
-      `Ошибка сети (код ${res.status})`;
-    throw new ApiError(res.status, msg);
+    const body = (data ?? {}) as { message?: string; error?: string; fieldErrors?: Record<string, string> };
+    const msg = body.message ?? body.error ?? `Ошибка сети (код ${res.status})`;
+    throw new ApiError(res.status, msg, body.fieldErrors ?? null);
   }
   return data as T;
 }

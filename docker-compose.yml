@@ -35,8 +35,9 @@ services:
       - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER:-citypulse}
       - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD:-citypulse}
       - JWT_SECRET=${JWT_SECRET:-change-me-to-at-least-32-chars-long-secret!}
-      - APP_ADMIN_EMAIL=${APP_ADMIN_EMAIL:-admin@citypulse.local}
-      - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-admin}
+      # Админ только из ENV, дефолтов нет: пусто = админ не создаётся (см. AdminBootstrap).
+      - APP_ADMIN_EMAIL=${APP_ADMIN_EMAIL:-}
+      - APP_ADMIN_PASSWORD=${APP_ADMIN_PASSWORD:-}
       # Флида ID в схеме Web SDK (public-клиент, секрета нет): бэкенд только
       # проверяет Flida access_token через userinfo, OIDC живёт во фронте.
       - FLIDA_USERINFO_URI=${FLIDA_USERINFO_URI:-https://id.flida.ru/api/oidc/userinfo}

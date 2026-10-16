@@ -3,10 +3,12 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { useEvents } from '@/lib/useEvents';
 import AppHeader from '@/components/AppHeader';
 
 export default function WorkspacePage() {
   const { ready, token, email } = useAuth();
+  const { connected, events } = useEvents(token);
   const router = useRouter();
 
   useEffect(() => {
@@ -54,9 +56,21 @@ export default function WorkspacePage() {
       <AppHeader />
       <main className="relative z-10 mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
           <div className={cardCls}>
-            <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-              Рабочая область
-            </h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Рабочая область
+              </h2>
+              <span
+                aria-live="polite"
+                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
+                  connected
+                    ? 'bg-green-500/20 text-green-700 dark:text-green-300'
+                    : 'bg-gray-500/20 text-gray-600 dark:text-gray-300'
+                }`}
+              >
+                {connected ? '● live' : '○ offline'}
+              </span>
+            </div>
             {email && (
               <p className="mt-1 text-sm font-medium text-gray-600 dark:text-gray-200">
                 {email}
@@ -65,6 +79,15 @@ export default function WorkspacePage() {
             <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               Здесь будет рабочее пространство
             </p>
+            {events.length > 0 && (
+              <ul className="mt-3 space-y-1" aria-live="polite">
+                {events.slice(0, 3).map((e) => (
+                  <li key={e.at} className="text-sm text-gray-600 dark:text-gray-300">
+                    {e.text}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

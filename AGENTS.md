@@ -72,12 +72,25 @@
   выезд `motion-safe:animate-sheet-right`, скролл страницы лочится); на десктопе —
   дропдаун у кнопки (`hidden md:block`). Кейфреймы `sheet-up`/`sheet-right`/`fade-in` — в
   `tailwind.config.js`. Закрытие по клику вне и `Escape`
-  (слушатели чистятся), фокус возвращается на кнопку. В пунктах меню scale нет —
-  только `hover:bg` (иначе дёргается список).
+  (слушатели чистятся), фокус возвращается на кнопку. Пункты меню — общий
+  интерактив (`hover:scale-[1.05] active:scale-[0.98]`), как всё кликабельное.
 - Навигация хедера — константа `NAV_ITEMS` в `AppHeader.tsx`: на десктопе ссылки
   идут в ряд по центру пилюли (`hidden md:flex`, стеклянные пилюли как «Войти»
   на `/`), на мобиле те же ссылки уезжают в шторку снизу.
   Новую кнопку добавлять в `NAV_ITEMS` — она появится в обоих местах сама.
+- Админка `/admin` — обычный Tailwind, как вся юзерская часть (MUI вырезан:
+  тянул ~60 пакетов и вечную сборку). UI-китов нет вообще. CRUD-шаблон: бэк —
+  `controller/admin/AdminUserController.java`, фронт — `components/admin/EntityTable.tsx`.
+- Секреты админа только из ENV (`APP_ADMIN_EMAIL`/`APP_ADMIN_PASSWORD`), дефолтов нет:
+  пусто = админ не создаётся. `.env` не коммитить (уже в `.gitignore`).
+- Ошибки API единые: `{message, fieldErrors?}` (`dto/ErrorResponse.java`,
+  `GlobalExceptionHandler`: 400/404/409/403/500, всё по-русски). Фронт показывает
+  `message` как есть, `fieldErrors` подсвечивает поля (`ApiError.fieldErrors`).
+- Realtime-заготовка: `SseHub` + `GET /api/events/stream?token=` (EventSource не умеет
+  header — tradeoff зафиксирован), broadcast — `POST /api/events/admin/broadcast`
+  (только ADMIN), фронт — `lib/useEvents.ts` (автореконнект с backoff).
+- e2e на общей базе: правило «создал — удали» (`scripts/e2e.sh`, префикс `e2e-`).
+  Раз есть POST — обязан быть DELETE.
 
 ## Liquid Glass — экраны с фото-фоном (`/`, `/login`, `/workspace`)
 

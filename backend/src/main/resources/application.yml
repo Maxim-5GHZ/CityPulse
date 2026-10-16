@@ -25,9 +25,10 @@ spring:
 app:
   jwt-secret: ${JWT_SECRET:change-me-to-at-least-32-chars-long-secret!}
   jwt-ttl-minutes: 720
-  # Сид админа на старте (AdminBootstrap). Пустой email = не создавать.
+  # Сид админа на старте (AdminBootstrap). Дефолтов нет: пустой email или
+  # пароль = не создавать. Значения только из ENV, в репо их не хранить.
   admin-email: ${APP_ADMIN_EMAIL:}
-  admin-password: ${APP_ADMIN_PASSWORD:admin}
+  admin-password: ${APP_ADMIN_PASSWORD:}
   # Флида ID в схеме Web SDK (public-клиент, секрета нет): бэкенд только
   # проверяет Flida access_token через userinfo и минтит наш JWT.
   flida:

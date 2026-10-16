@@ -26,6 +26,9 @@ public class SecurityConfig {
       .authorizeHttpRequests(auth -> auth
         // Публичное: регистрация/логин и проверки живости (для фронта и docker healthcheck)
         .requestMatchers("/api/auth/**", "/api/health", "/api/db", "/error").permitAll()
+        // SSE-стрим проверяет ?token= сам (EventSource не умеет header) — фильтр пропускает,
+        // контроллер валидирует JWT вручную. Broadcast — только ADMIN (проверка в контроллере).
+        .requestMatchers("/api/events/stream").permitAll()
         // Задел под админку: /api/admin/** только для роли ADMIN
         .requestMatchers("/api/admin/**").hasRole("ADMIN")
         .anyRequest().authenticated())
