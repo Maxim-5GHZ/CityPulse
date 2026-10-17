@@ -728,11 +728,10 @@ export default function DistrictMap({
       };
     }
     const meta = TAG_HOVER[b.tag];
-    const path = busPaths[b.id];
     return {
       id: b.id, name: `${BUILDING_TAG_LABEL[b.tag]} • корпус «${b.name}»`, kind: b.tag,
       x, y, radiusM: meta.radiusM, color: meta.color,
-      details: `${b.residents} чел. • путь до остановки: ${path ? `${path.distanceM} м` : 'нет пути'} • зона ${meta.radiusM} м`,
+      details: `Общественное учреждение (нежилое) • радиус зоны: ${meta.radiusM} м`,
     };
   };
 
@@ -783,10 +782,17 @@ export default function DistrictMap({
         titleCls: 'text-blue-700 dark:text-blue-300',
         rows: [
           { label: 'Этажность:', value: `${selBuilding.floors} эт.` },
-          { label: 'Жителей:', value: `${selBuilding.residents} чел.` },
-          { label: 'Тег:', value: selBuilding.tag ? BUILDING_TAG_LABEL[selBuilding.tag] : 'Жилой' },
+          ...(selBuilding.tag
+            ? [
+                { label: 'Назначение:', value: BUILDING_TAG_LABEL[selBuilding.tag] },
+                { label: 'Жителей:', value: '0 (нежилое)' },
+              ]
+            : [
+                { label: 'Жителей:', value: `${selBuilding.residents} чел.` },
+                { label: 'Назначение:', value: 'Жилой дом' },
+              ]),
         ],
-        pathBox: path ? `Кратчайший путь: ${path.distanceM} м (~${path.timeMinutes} мин)` : null,
+        pathBox: !selBuilding.tag && path ? `Кратчайший путь: ${path.distanceM} м (~${path.timeMinutes} мин)` : null,
         hint: 'ПКМ по дому — сменить тег или снести.',
         onClose: () => onSelectBuilding(null),
       };
@@ -1385,6 +1391,7 @@ export default function DistrictMap({
         {scenario.buildings.map((b: Building) => {
           const isSelected = selectedBuildingId === b.id;
           const isDragged = drag?.kind === 'building' && drag.id === b.id;
+          const displayLabel = b.tag ? `${b.name} (${BUILDING_TAG_LABEL[b.tag]})` : `${b.name} (${b.residents} чел)`;
           if (b.polygon && b.polygon.length >= 3) {
             const shifted = isDragged ? b.polygon.map((p) => ({ x: p.x + dragDX, y: p.y + dragDY })) : b.polygon;
             const pts = shifted.map((p) => `${p.x},${p.y}`).join(' ');
@@ -1400,7 +1407,7 @@ export default function DistrictMap({
               >
                 <polygon points={pts} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={deltaStroke(b.id, isSelected ? '#60a5fa' : '#475569')} strokeWidth="2" />
                 <text x={shifted[0].x + 10} y={shifted[0].y + 16} fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
-                  {b.name} ({b.residents} чел)
+                  {displayLabel}
                 </text>
                 {b.tag && (
                   <g>
@@ -1430,7 +1437,7 @@ export default function DistrictMap({
             >
               <rect x={bx} y={by} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={deltaStroke(b.id, isSelected ? '#60a5fa' : '#475569')} strokeWidth={isSelected ? 2.5 : 1} />
               <text x={cx} y={cy + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
-                {b.name}
+                {b.tag ? `${b.name} (${BUILDING_TAG_LABEL[b.tag]})` : b.name}
               </text>
               {b.tag && (
                 <g>

@@ -697,36 +697,91 @@ export default function DeckCityView({
   // а не клик, меню не открываем.
   const deckDownPos = useRef<{ x: number; y: number } | null>(null);
 
+  // Обработка ПКМ в 3D для выставления маршрута А → Б:
+  // сначала прямой рейкаст по объекту, иначе точный unproject на плоскость
+  // земли (targetZ = 0) → САПР-координаты → снап к узлу.
   const handleDeckContextMenu = (e: ReactMouseEvent) => {
     e.preventDefault();
     const down = deckDownPos.current;
     deckDownPos.current = null;
-    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12) return;
     const deck = deckRef.current?.deck;
     const canvas = deck?.getCanvas();
     const vp = deck?.getViewports()[0];
     if (!canvas || !vp) return;
     const rect = canvas.getBoundingClientRect();
-    // unproject → мир Deck.gl (z=0, уровень земли) → обратно в САПР-метры.
-    const [wx, wy] = vp.unproject([e.clientX - rect.left, e.clientY - rect.top]);
-    const cadX = wx + 480;
-    const cadY = 320 - wy;
-    const nodeId = snapNodeId(scenario.nodes, cadX, cadY);
-    if (!nodeId) {
-      onNotify?.('Рядом нет узла графа — кликните ближе к дороге');
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+
+    let targetNodeId: string | null = null;
+    let targetLabel = '';
+
+    // 1. Сначала пробуем прямой рейкаст по объекту (здание, остановка или ребро)
+    const picked = deck.pickObject({ x: clickX, y: clickY });
+    if (picked?.object) {
+      if ('gateNodeId' in picked.object) {
+        const b = picked.object as Building;
+        targetNodeId = b.gateNodeId;
+        targetLabel = `Вход: ${b.name}`;
+      } else if ('type' in picked.object && 'nodeId' in picked.object) {
+        const a = picked.object as Amenity;
+        targetNodeId = a.nodeId;
+        targetLabel = `${a.name}`;
+      } else if ('from' in picked.object && 'to' in picked.object) {
+        const edge = picked.object as GraphEdge;
+        targetNodeId = edge.from;
+        targetLabel = 'Участок УДС';
+      }
+    }
+
+    // 2. Если объект не выбран напрямую — точный unproject на плоскость земли targetZ = 0
+    if (!targetNodeId) {
+      const [wx, wy] = vp.unproject([clickX, clickY], { targetZ: 0 });
+      const cadX = wx + 480;
+      const cadY = 320 - wy;
+
+      targetNodeId = snapNodeId(scenario.nodes, cadX, cadY, 100);
+
+      if (!targetNodeId && scenario.nodes.length > 0) {
+        let best = scenario.nodes[0];
+        let bestD = Math.hypot(best.x - cadX, best.y - cadY);
+        for (const n of scenario.nodes) {
+          const d = Math.hypot(n.x - cadX, n.y - cadY);
+          if (d < bestD) {
+            bestD = d;
+            best = n;
+          }
+        }
+        if (bestD <= 220) {
+          targetNodeId = best.id;
+        }
+      }
+
+      if (targetNodeId) {
+        const n = nodeMap.get(targetNodeId);
+        targetLabel = n ? (n.label || `узел (${Math.round(n.x)}, ${Math.round(n.y)})`) : 'Точка сети';
+      }
+    }
+
+    if (!targetNodeId) {
+      onNotify?.('Рядом нет узла графа — кликните ближе к дороге или корпусу');
       return;
     }
-    setRouteMenu({ x: e.clientX, y: e.clientY, nodeId, label: `узел ${Math.round(cadX)}, ${Math.round(cadY)}` });
+    setRouteMenu({ x: e.clientX, y: e.clientY, nodeId: targetNodeId, label: targetLabel });
   };
 
   const setDeckRouteStart = (nodeId: string) => {
     onRouteChange({ startId: nodeId, pathNodeIds: [] });
-    onNotify?.('Точка А поставлена — кликните ПКМ для точки Б');
+    onNotify?.('Точка А зафиксирована — кликните ПКМ в другом месте для точки Б');
   };
 
   const setDeckRouteEnd = (nodeId: string) => {
     const startId = route?.startId;
-    if (!startId) return;
+    if (!startId) {
+      // Если точки А ещё не было, ставим текущую как А
+      setDeckRouteStart(nodeId);
+      return;
+    }
     if (startId === nodeId) {
       onRouteChange(null);
       onNotify?.('Точки совпали — маршрут сброшен');
@@ -738,7 +793,7 @@ export default function DeckCityView({
       return;
     }
     onRouteChange({ startId, pathNodeIds: built.pathNodeIds });
-    onNotify?.(`Маршрут: ${built.distanceM} м, ~${built.timeMinutes} мин пешком`);
+    onNotify?.(`Маршрут построен: ${built.distanceM} м (~${built.timeMinutes} мин пешком)`);
   };
 
   // Закрытие меню маршрута: Escape + клик вне (меню помечено data-ctx-menu).
@@ -769,7 +824,11 @@ export default function DeckCityView({
     const agents: PedestrianAgent[] = [];
     let globalIdx = 0;
 
-    scenario.buildings.forEach((b) => {
+    // В школах, больницах, полиции и магазинах жителей нет — пешеходов
+    // спавним только из жилых домов (без социальных тегов).
+    const residentialBuildings = scenario.buildings.filter((b) => !b.tag);
+
+    residentialBuildings.forEach((b) => {
       const busPath = busPaths[b.id];
       const parkPath = parkPaths[b.id];
       const schoolPath = schoolPaths?.[b.id];
@@ -1643,7 +1702,9 @@ export default function DeckCityView({
             if (layer.id === 'buildings-3d-layer') {
               const b = object as Building;
               return {
-                text: `${b.name}\n${b.floors} эт. · ${b.residents} жит.`,
+                text: b.tag
+                  ? `${b.name}\n${BUILDING_TAG_LABEL[b.tag]} (нежилое здание)\n${b.floors} эт.`
+                  : `${b.name}\n${b.floors} эт. · ${b.residents} жит.`,
               };
             }
             if (layer.id === 'road-chains-layer') {
@@ -1696,14 +1757,18 @@ export default function DeckCityView({
               title={`Объект: ${selectedBuilding.name}`}
               rows={[
                 { label: 'Этажность:', value: `${selectedBuilding.floors} эт.` },
-                { label: 'Жителей:', value: `${selectedBuilding.residents} чел.` },
-                {
-                  label: 'Тег:',
-                  value: selectedBuilding.tag ? BUILDING_TAG_LABEL[selectedBuilding.tag] : 'Жилой',
-                },
+                ...(selectedBuilding.tag
+                  ? [
+                      { label: 'Назначение:', value: BUILDING_TAG_LABEL[selectedBuilding.tag] },
+                      { label: 'Жителей:', value: '0 (нежилое)' },
+                    ]
+                  : [
+                      { label: 'Жителей:', value: `${selectedBuilding.residents} чел.` },
+                      { label: 'Назначение:', value: 'Жилой дом' },
+                    ]),
               ]}
               pathBox={
-                busPaths[selectedBuilding.id]
+                !selectedBuilding.tag && busPaths[selectedBuilding.id]
                   ? `Кратчайший путь: ${busPaths[selectedBuilding.id]?.distanceM} м (~${busPaths[selectedBuilding.id]?.timeMinutes} мин)`
                   : null
               }

@@ -98,7 +98,12 @@ export function computeResidentImpact(
     const p = paths[id];
     return p ? p.distanceM : null;
   };
-  for (const b of currentScenario.buildings) {
+  // Оцениваем только жилые дома (без социальных тегов school/police/hospital/shop:
+  // у них нет жителей, они точки обслуживания, а не источник спроса).
+  const currentResidential = currentScenario.buildings.filter((b) => !b.tag);
+  const baseResidential = baseScenario.buildings.filter((b) => !b.tag);
+
+  for (const b of currentResidential) {
     const after = distOf(current.busPaths, b.id) ?? CITY_DEFAULTS.isolationPenaltyM;
     const beforeRaw = distOf(base.busPaths, b.id);
     if (beforeRaw === null && !(b.id in base.busPaths)) {
@@ -120,9 +125,9 @@ export function computeResidentImpact(
       summary.unchangedResidents += b.residents;
     }
   }
-  // Снесённые: были в базе, в текущем нет.
-  const currentIds = new Set(currentScenario.buildings.map((b) => b.id));
-  for (const b of baseScenario.buildings) {
+  // Снесённые: были в базе, в текущем нет (только жилые).
+  const currentIds = new Set(currentResidential.map((b) => b.id));
+  for (const b of baseResidential) {
     if (!currentIds.has(b.id)) summary.removedResidents += b.residents;
   }
   return summary;
@@ -213,7 +218,10 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
     return { best, covered };
   };
 
-  for (const b of scenario.buildings) {
+  // Жителями обладают ТОЛЬКО жилые здания (без тегов school, police, hospital, shop).
+  const residentialBuildings = scenario.buildings.filter((b) => !b.tag);
+
+  for (const b of residentialBuildings) {
     totalResidents += b.residents;
 
     // Путь к автобусной остановке
@@ -327,7 +335,7 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
   const iso5BusPercent = totalResidents > 0 ? Math.round((iso5Residents / totalResidents) * 100) : 0;
   const iso10BusPercent = totalResidents > 0 ? Math.round((iso10Residents / totalResidents) * 100) : 0;
   const bikeAccessPercent = totalResidents > 0 ? Math.round((bikeCoveredResidents / totalResidents) * 100) : 0;
-  const mobilityIndex = scenario.buildings.length > 0 ? Math.round((accessiblePathCount / scenario.buildings.length) * 100) : 0;
+  const mobilityIndex = residentialBuildings.length > 0 ? Math.round((accessiblePathCount / residentialBuildings.length) * 100) : 0;
   const avgDetourIndex = detourCount > 0 ? Number((detourSum / detourCount).toFixed(2)) : 0;
 
   // Зелень: сумма полигонов скверов (+ заглушка под точечные) на жителя.
@@ -357,7 +365,7 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
   budgetSpentRub += scenario.amenities.filter((a) => a.isCustom && a.type === 'park').length * INFRA_COSTS.add_park;
   budgetSpentRub += scenario.amenities.filter((a) => a.isCustom && a.type === 'school').length * INFRA_COSTS.add_school;
   budgetSpentRub += scenario.amenities.filter((a) => a.isCustom && a.type === 'bus_stop').length * INFRA_COSTS.relocate_bus_stop;
-  budgetSpentRub += scenario.buildings.filter((b) => b.isCustom).length * INFRA_COSTS.build_new_tower;
+  budgetSpentRub += residentialBuildings.filter((b) => b.isCustom).length * INFRA_COSTS.build_new_tower;
   // Теги корпусов: платит только тег, назначенный в этой сессии (tagCustom),
   // чтобы старый корпус из сейва не влетал в build_new_tower.
   for (const b of scenario.buildings) {
