@@ -114,10 +114,11 @@ export default function AppHeader() {
         <div className={HEADER_PILL_CLS}>
           <Link
             href="/workspace"
-            aria-label="CityPulse — рабочая область"
+            aria-label="Пульс Города — рабочая область"
             className={HEADER_LOGO_LINK_CLS}
           >
-            <PulseLogo as="span" size="lg" />
+            {/* md: русское название шире, lg вытеснял бы кнопку аккаунта на мобиле */}
+            <PulseLogo as="span" size="md" />
           </Link>
 
           {/* Десктоп-навигация: стеклянные пилюли, как «Войти» на лендинге */}

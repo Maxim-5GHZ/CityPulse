@@ -59,7 +59,7 @@ export default function AboutPage() {
           <div className="flex flex-1 flex-col items-center justify-center py-6">
             <div className={`${cardCls} flex flex-col items-center gap-5`}>
               <div className="mx-auto flex justify-center">
-                <PulseLogo as="span" size="lg" className="scale-150 my-2" />
+                <PulseLogo as="span" size="lg" className="scale-110 sm:scale-125 my-2" />
               </div>
 
               <h1 className="text-center text-2xl font-black tracking-tight text-gray-900 dark:text-gray-100">

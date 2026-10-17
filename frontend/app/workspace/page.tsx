@@ -774,7 +774,6 @@ export default function WorkspacePage() {
                 baseStamp={baseStamp}
                 onFixBase={handleFixBase}
                 onRollbackToBase={handleRollbackToBase}
-                onOpenAudit={openAudit}
               />
             </div>
           </div>

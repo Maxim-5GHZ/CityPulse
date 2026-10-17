@@ -167,7 +167,7 @@ export default function LoginPage() {
 
         <div className={cardCls}>
           <div className="mx-auto flex justify-center">
-            <PulseLogo size="lg" className="scale-150 my-2" />
+            <PulseLogo size="lg" className="scale-110 sm:scale-125 my-2" />
           </div>
 
           <div className="mt-4 flex rounded-full border border-white/60 bg-white/40 p-1 backdrop-blur-xl dark:border-white/20 dark:bg-white/10">

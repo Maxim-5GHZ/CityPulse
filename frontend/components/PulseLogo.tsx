@@ -28,13 +28,16 @@ interface PulseLogoProps {
 }
 
 /**
- * Название CityPulse на canvas: волна пульса пробегает по буквам слева
+ * Название «Пульс Города» на canvas: волна пульса пробегает по буквам слева
  * направо в спокойных slate-тонах. Без радуги и неона.
  * Текст продублирован скрытым span'ом — читается скринридерами и копируется.
+ * Canvas ведёт себя как адаптивная картинка: фиксированная ширина замера +
+ * aspect-ratio и max-width 100%, поэтому на узких экранах сжимается
+ * пропорционально и не распирает вёрстку.
  */
 export default function PulseLogo({
   size = 'md',
-  text = 'CityPulse',
+  text = 'Пульс Города',
   as = 'span',
   animated = true,
   className = '',
@@ -67,7 +70,11 @@ export default function PulseLogo({
       const w = Math.ceil(starts[chars.length]);
       const h = Math.ceil(fontPx * 1.35);
       canvas.style.width = `${w + pad * 2}px`;
-      canvas.style.height = `${h + pad * 2}px`;
+      // Высота через aspect-ratio, а не фиксированный px: при max-width: 100%
+      // canvas ужмётся пропорционально на узких экранах (инлайн-height перебил бы h-auto).
+      canvas.style.height = 'auto';
+      canvas.style.aspectRatio = `${w + pad * 2} / ${h + pad * 2}`;
+      canvas.style.maxWidth = '100%';
       canvas.width = Math.ceil((w + pad * 2) * dpr);
       canvas.height = Math.ceil((h + pad * 2) * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -149,7 +156,7 @@ export default function PulseLogo({
 
   return (
     <Tag role="img" aria-label={text} className={`inline-block leading-none ${className}`}>
-      <canvas ref={canvasRef} aria-hidden="true" className="block" />
+      <canvas ref={canvasRef} aria-hidden="true" className="block max-w-full h-auto" />
       <span className="sr-only">{text}</span>
     </Tag>
   );

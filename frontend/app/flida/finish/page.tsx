@@ -69,7 +69,7 @@ export default function FlidaFinishPage() {
       <main className="container relative mx-auto flex min-h-screen flex-col items-center justify-center px-6 py-6">
         <div className={cardCls}>
           <div className="mx-auto flex justify-center">
-            <PulseLogo as="h1" size="lg" className="scale-150 my-2" />
+            <PulseLogo as="h1" size="lg" className="scale-110 sm:scale-125 my-2" />
           </div>
           <p className="mt-4 text-center text-sm text-gray-600 dark:text-gray-200">
             {complaint ?? 'Завершаем вход через Флида ID…'}

@@ -30,8 +30,11 @@
 - Шрифт: Inter, system-ui (см. `FONT_FAMILY` в `PulseLogo.tsx`).
 - Бренд: `font-black tracking-tight`. Лейблы и инпуты: `text-sm font-medium`.
   Разделители: `text-xs uppercase text-gray-500`.
-- Весь видимый UI — на русском. Бренд `CityPulse` вставляется только через
-  `<PulseLogo size="sm"|"md"|"lg">`, хардкодить текстом нельзя.
+- Весь видимый UI — на русском. Бренд «Пульс Города» вставляется только через
+  `<PulseLogo size="sm"|"md"|"lg">` (текст по умолчанию уже русский),
+  хардкодить текстом нельзя. Canvas логотипа адаптивный (`max-w-full`,
+  высота через `aspect-ratio` в `setup()`), поэтому на узких экранах сжимается
+  пропорционально и не распирает вёрстку.
 
 ## Компоненты и паттерны
 
@@ -61,7 +64,8 @@
   на всю ширину экрана — то же мутное стекло, что у карточек:
   `border-white/60 bg-white/40 backdrop-blur-xl backdrop-saturate-150`
   (`dark:border-white/20 dark:bg-gray-900/40`) + объёмные inset-тени карточки.
-  Слева `Link` с `<PulseLogo as="span" size="lg">`, справа кнопка
+  Слева `Link` с `<PulseLogo as="span" size="md">` (русское название шире —
+  `lg` вытеснял бы кнопку аккаунта на мобиле), справа кнопка
   аккаунта (аватар-инициал + email + шеврон) с меню `role="menu"` (тоже стекло:
   `rounded-2xl bg-white/70 backdrop-blur-xl`, `dark:bg-gray-900/70`):
   шапка-подпись «Аккаунт» + email + «Выйти». Открытое меню кладёт под себя
@@ -116,8 +120,8 @@
   (`dark:border-white/20 dark:bg-white/10`). На `/` в шапке слева
   `<PulseLogo as="span" size="lg">` (клик — к началу deck), справа две такие пилюли:
   `Контакты` (Link → `/about`) + `Войти` / `В интерфейс`.
-- Логотип: `<PulseLogo as="span" size="lg" className="scale-150 my-2">` в обёртке
-  `mx-auto flex justify-center` (h1 — заголовок страницы/слайда, не лого).
+- Логотип: `<PulseLogo as="span" size="lg" className="scale-110 sm:scale-125 my-2">`
+  в обёртке `mx-auto flex justify-center` (h1 — заголовок страницы/слайда, не лого).
 - Специфика `/login`: табы — сегментированный контрол (`rounded-full bg-white/40 p-1`,
   активный таб — выпуклая пилюля `rounded-full bg-white shadow`); инпуты и кнопка
   Флиды — пилюли `rounded-full` с линзой (`inset 0 2px 4px rgba(0,0,0,0.06)` +
@@ -139,9 +143,9 @@
 
 ## Презентация `/` — deck для жюри (до регистрации)
 
-- Живёт в одном `frontend/app/page.tsx` (~250 строк), новых зависимостей и правок
-  `tailwind.config.js` нет (`app/**/*` уже покрыт `content`). Пока только hero;
-  середину докинем позже (пустые заглушки не показывать жюри), Контакты — отдельная
+- Живёт в одном `frontend/app/page.tsx`, новых зависимостей и правок
+  `tailwind.config.js` нет (`app/**/*` уже покрыт `content`). 6 слайдов
+  (hero/сравнение/сети/лесенка/аудитория/ROI), Контакты — отдельная
   страница `/about` (QR + ссылки + заглушка «Разработчики»),
   интерактивы — в `frontend/components/pitch/` (фильтр, лесенка, табы, ROI).
 - Модель: `interface Slide { id, badge, title, subtitle, content }`, массив `slides`,
@@ -153,8 +157,9 @@
   `button/a`), тач-свайп `>50px`. Все слушатели
   (`wheel/keydown/touchstart/touchend`) чистятся в cleanup.
 - Каркас слайда — стекло с `/`: `h-screen w-screen overflow-hidden bg-cover bg-center` +
-  `url('/city.png')` + та же вуаль (`from-white/30 via-white/10 to-white/40`,
-  `dark:from-black/60 dark:via-black/40 dark:to-black/70`). Тело —
+  `url('/city.png')` + плотная вуаль для читаемости текста
+  (`from-white/60 via-white/40 to-white/70`,
+  `dark:from-black/80 dark:via-black/70 dark:to-black/90`). Тело —
   `overflow-y-auto` со скрытым скроллбаром (`[scrollbar-width:none]
   [&::-webkit-scrollbar]:hidden`, класса `no-scrollbar` в проекте нет — не
   использовать). Центрирование через `m-auto` на контенте, не `justify-center`
@@ -171,10 +176,10 @@
   `01/NN` (`font-mono`) + `↑/↓` (`w-10 h-10 rounded-full` на тёмном стекле сабмита,
   `aria-label`+`title`, `disabled:opacity-40 disabled:pointer-events-none`).
 - Слайд 1 (hero): карточка `cardCls` с `/` (`max-w-xl`), `<PulseLogo as="span"
-  size="lg" className="scale-150 my-2 sm:scale-[2.25] sm:my-16">` в
-  `mx-auto flex justify-center` (внутри
-  слайда не `h1` — `h1` уже заголовок слайда; на десктопе лого в 1.5 раза крупнее
-  базового, `sm:my-16` компенсирует разлёт CSS-скейла, иначе налезет на QR), бейдж-пилюля (`rounded-full
+  size="lg" className="scale-110 my-2 sm:scale-[1.4] sm:my-4">` в
+  `mx-auto flex justify-center w-full` (внутри
+  слайда не `h1` — `h1` уже заголовок слайда; русское название шире латиницы,
+  поэтому скейл сбавлен, иначе распрёт вёрстку на мобиле), бейдж-пилюля (`rounded-full
   border-white/60 bg-white/40`, `text-xs uppercase text-gray-600`,
   `dark:bg-white/10 dark:text-gray-200`), заголовок `font-black tracking-tight` с
   `drop-shadow` для читаемости поверх фото. Под лого — `QrRow`
@@ -268,7 +273,9 @@
   Вода и дороги — реальный OSM, классы и шлейф — синтетика.
 - Коробка влияет на метрики: рвёт ребра в радиусе 20м
   (`closed` или `length+=периметр/2`) → Dijkstra заново; +ветрозатон +тень.
-- API/БД: сценарии — `V3__scenarios.sql` (`owner_id, name, graph JSONB`), CRUD
+- API/БД: сценарии — `V3__scenarios.sql` (`owner_id, name, graph JSONB`) +
+  `V5__district_scenarios.sql` (`owner_email, name, payload JSONB`, был дублем V3 —
+  Flyway падает на дублях на валидации, `out-of-order` не помогает), CRUD
   `/api/scenarios`, дубли `/metrics/calculate /wind /shadow /conclusion` за JWT.
   Ошибки `{message, fieldErrors?}` по-русски, клиент — `lib/api.ts`.
 - UI конструктора: русский, бренд только `<PulseLogo>`, панели-стекло

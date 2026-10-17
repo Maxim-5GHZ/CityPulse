@@ -3,7 +3,7 @@ import { AuthProvider } from '@/lib/auth';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'CityPulse',
+  title: 'Пульс Города',
   description: 'Хакатон-скелет: Next.js + Spring Boot + Postgres',
   icons: {
     icon: '/favicon.ico',

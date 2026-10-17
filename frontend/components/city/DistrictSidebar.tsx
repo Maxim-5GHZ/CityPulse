@@ -11,7 +11,6 @@ interface DistrictSidebarProps {
   baseStamp: string;
   onFixBase: () => void;
   onRollbackToBase: () => void;
-  onOpenAudit: () => void;
 }
 
 const cardGlassCls =
@@ -27,7 +26,6 @@ export default function DistrictSidebar({
   baseStamp,
   onFixBase,
   onRollbackToBase,
-  onOpenAudit,
 }: DistrictSidebarProps) {
   // Аудит и «Было / Стало» живут в разделе «Аналитика» (AuditDashboardModal),
   // здесь — только инспектор объекта и действия с базой сравнения.
@@ -123,14 +121,6 @@ export default function DistrictSidebar({
             ↩ Откатить к ДО
           </button>
         </div>
-        <button
-          type="button"
-          onClick={onOpenAudit}
-          title="Открыть дашборд глубокого аудита: динамика решений, баланс среды, выводы алгоритма"
-          className="mt-2 w-full rounded-full border border-blue-400/60 bg-blue-600/90 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-200 ease-out hover:scale-[1.02] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none"
-        >
-          📊 Развернуть полный отчёт аудита
-        </button>
       </div>
     </aside>
   );
