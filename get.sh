@@ -8,10 +8,7 @@ OUTPUT_FILE="all_code.txt"
 
 find . -type f \( \
   -name "*.ts" -o -name "*.tsx" \
-    -o -name "Dockerfile*" \
-    -o -name "docker-compose*.yml" \
-    -o -name "*.java" \
-    -o -name "AGENTS.md" \
+   -o -name "AGENTS.md" \
   \) \
   -not -path "./.git/*" \
   -not -path "./frontend/node_modules/*" \

@@ -259,8 +259,9 @@ export default function DistrictToolbar({
         <button
           type="button"
           onClick={onOpenAudit}
-          title="Открыть дашборд глубокого аудита: динамика решений, баланс среды, выводы алгоритма"
-          className={cadBtnActive}
+          disabled={buildingCount === 0}
+          title={buildingCount === 0 ? 'Сначала добавьте дома на чертёж — аудиту пока нечего считать' : 'Открыть дашборд глубокого аудита: динамика решений, баланс среды, выводы алгоритма'}
+          className={`${cadBtnActive} disabled:pointer-events-none disabled:opacity-40`}
         >
           📊 Аналитика
         </button>

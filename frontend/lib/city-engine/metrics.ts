@@ -1,6 +1,6 @@
 import { DistrictScenario, DistrictMetrics, PathResult, CriticalBottleneck } from './types';
 import { buildAdjacency, findShortestPath } from './dijkstra';
-import { computePolygonAreaM2 } from './geometry';
+import { computePolygonAreaM2, resolveGateNodeId } from './geometry';
 
 export const INFRA_COSTS = {
   add_crossing: 320_000,
@@ -190,7 +190,10 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
   const taggedPoints = (tag: 'school' | 'police' | 'hospital' | 'shop'): ServicePoint[] =>
     scenario.buildings
       .filter((b) => b.tag === tag)
-      .map((b) => ({ nodeId: b.gateNodeId, radiusM: CITY_DEFAULTS.serviceDefaultRadiusM }));
+      .map((b) => ({
+        nodeId: resolveGateNodeId(scenario.nodes, b.gateNodeId, b.x, b.y),
+        radiusM: CITY_DEFAULTS.serviceDefaultRadiusM,
+      }));
   const schoolPoints: ServicePoint[] = [
     ...schoolAmenities.map((s) => ({
       nodeId: s.nodeId,
@@ -223,11 +226,12 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
 
   for (const b of residentialBuildings) {
     totalResidents += b.residents;
+    const gate = resolveGateNodeId(scenario.nodes, b.gateNodeId, b.x, b.y);
 
     // Путь к автобусной остановке
     let bestBusPath: PathResult | null = null;
     for (const bus of busAmenities) {
-      const p = findShortestPath(b.gateNodeId, bus.nodeId, adj);
+      const p = findShortestPath(gate, bus.nodeId, adj);
       if (p && (!bestBusPath || p.distanceM < bestBusPath.distanceM)) bestBusPath = p;
     }
     busPaths[b.id] = bestBusPath;
@@ -274,7 +278,7 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
     let bestParkPath: PathResult | null = null;
     let parkCovered = false;
     for (const park of parkAmenities) {
-      const p = findShortestPath(b.gateNodeId, park.nodeId, adj);
+      const p = findShortestPath(gate, park.nodeId, adj);
       if (!p) continue;
       if (!bestParkPath || p.distanceM < bestParkPath.distanceM) bestParkPath = p;
       const parkRadius = park.coverageRadiusM || CITY_DEFAULTS.parkDefaultRadiusM;
@@ -287,22 +291,22 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
 
     // Соцобъекты: школа (+ отдельно стоящие из старых сейвов), полиция,
     // больница, магазин — покрытие по Дейкстре, радиус 500.
-    const school = bestService(b.gateNodeId, schoolPoints);
+    const school = bestService(gate, schoolPoints);
     schoolPaths[b.id] = school.best;
     if (school.best && school.covered) {
       schoolCoveredResidents += b.residents;
     }
-    const police = bestService(b.gateNodeId, policePoints);
+    const police = bestService(gate, policePoints);
     policePaths[b.id] = police.best;
     if (police.best && police.covered) {
       policeCoveredResidents += b.residents;
     }
-    const hospital = bestService(b.gateNodeId, hospitalPoints);
+    const hospital = bestService(gate, hospitalPoints);
     hospitalPaths[b.id] = hospital.best;
     if (hospital.best && hospital.covered) {
       hospitalCoveredResidents += b.residents;
     }
-    const shop = bestService(b.gateNodeId, shopPoints);
+    const shop = bestService(gate, shopPoints);
     shopPaths[b.id] = shop.best;
     if (shop.best && shop.covered) {
       shopCoveredResidents += b.residents;

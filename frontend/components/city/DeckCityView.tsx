@@ -22,7 +22,8 @@ import {
 } from '@/lib/city-engine/types';
 import ObjectInspectorCard from './ObjectInspectorCard';
 import RouteContextMenu from './RouteContextMenu';
-import { snapNodeId, buildRouteAB } from '@/lib/city-engine/routeTool';
+import { snapRouteNodeIdExtended, buildRouteAB, ROUTE_SNAP_M } from '@/lib/city-engine/routeTool';
+import { polygonCentroid } from '@/lib/city-engine/geometry';
 import type { RouteSelection } from './DistrictMap';
 
 interface DeckCityViewProps {
@@ -686,7 +687,7 @@ export default function DeckCityView({
     : undefined;
 
   // Маршрут А → Б ставится только здесь, в 3D: ПКМ → unproject в мир →
-  // САПР-координаты → снап к узлу. В 2D маршрут только отображается.
+  // САПР-координаты → снап к узлу/ребру (≤50м). В 2D маршрут только отображается.
   const [routeMenu, setRouteMenu] = useState<{
     x: number;
     y: number;
@@ -712,11 +713,14 @@ export default function DeckCityView({
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
+    const [uwx, uwy] = vp.unproject([clickX, clickY], { targetZ: 0 });
+    const cadX = uwx + 480;
+    const cadY = 320 - uwy;
 
     let targetNodeId: string | null = null;
     let targetLabel = '';
 
-    // 1. Сначала пробуем прямой рейкаст по объекту (здание, остановка или ребро)
+    // 1. Сначала пробуем прямой рейкаст по объекту (здание, остановка, сквер или ребро)
     const picked = deck.pickObject({ x: clickX, y: clickY });
     if (picked?.object) {
       if ('gateNodeId' in picked.object) {
@@ -729,43 +733,35 @@ export default function DeckCityView({
         targetLabel = `${a.name}`;
       } else if ('from' in picked.object && 'to' in picked.object) {
         const edge = picked.object as GraphEdge;
-        targetNodeId = edge.from;
+        const u = nodeMap.get(edge.from);
+        const v = nodeMap.get(edge.to);
+        const du = u ? Math.hypot(u.x - cadX, u.y - cadY) : Infinity;
+        const dv = v ? Math.hypot(v.x - cadX, v.y - cadY) : Infinity;
+        targetNodeId = du <= dv ? edge.from : edge.to;
         targetLabel = 'Участок УДС';
       }
     }
 
-    // 2. Если объект не выбран напрямую — точный unproject на плоскость земли targetZ = 0
+    // 2. Если объект не выбран напрямую — unproject на плоскость земли targetZ = 0.
+    // Снап extended: сначала узлы/рёбра в радиусе ≤50м, иначе ближайший узел
+    // графа без радиуса (forced) с уведомлением о притяжении.
+    let forcedDist: number | null = null;
     if (!targetNodeId) {
-      const [wx, wy] = vp.unproject([clickX, clickY], { targetZ: 0 });
-      const cadX = wx + 480;
-      const cadY = 320 - wy;
-
-      targetNodeId = snapNodeId(scenario.nodes, cadX, cadY, 100);
-
-      if (!targetNodeId && scenario.nodes.length > 0) {
-        let best = scenario.nodes[0];
-        let bestD = Math.hypot(best.x - cadX, best.y - cadY);
-        for (const n of scenario.nodes) {
-          const d = Math.hypot(n.x - cadX, n.y - cadY);
-          if (d < bestD) {
-            bestD = d;
-            best = n;
-          }
-        }
-        if (bestD <= 220) {
-          targetNodeId = best.id;
-        }
-      }
-
-      if (targetNodeId) {
+      const snap = snapRouteNodeIdExtended(scenario.nodes, scenario.edges, cadX, cadY, ROUTE_SNAP_M);
+      if (snap) {
+        targetNodeId = snap.nodeId;
+        forcedDist = snap.forced ? snap.distM : null;
         const n = nodeMap.get(targetNodeId);
         targetLabel = n ? (n.label || `узел (${Math.round(n.x)}, ${Math.round(n.y)})`) : 'Точка сети';
       }
     }
 
     if (!targetNodeId) {
-      onNotify?.('Рядом нет узла графа — кликните ближе к дороге или корпусу');
+      onNotify?.('В графе ещё нет узлов — сначала постройте улицу');
       return;
+    }
+    if (forcedDist !== null) {
+      onNotify?.(`Рядом нет узла (снап ${ROUTE_SNAP_M} м) — точка притянулась к ближайшему узлу (${forcedDist} м)`);
     }
     setRouteMenu({ x: e.clientX, y: e.clientY, nodeId: targetNodeId, label: targetLabel });
   };
@@ -797,12 +793,12 @@ export default function DeckCityView({
   };
 
   // Закрытие меню маршрута: Escape + клик вне (меню помечено data-ctx-menu).
+  // Сам маршрут Escape не сбрасывает — только пункт «Очистить маршрут».
   useEffect(() => {
     if (!routeMenu) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setRouteMenu(null);
-        onRouteChange(null);
       }
     };
     const onDown = (e: PointerEvent) => {
@@ -814,7 +810,7 @@ export default function DeckCityView({
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('pointerdown', onDown);
     };
-  }, [routeMenu, onRouteChange]);
+  }, [routeMenu]);
 
   // Генерация пула независимых пешеходов (вразнобой): каждый юнит —
   // автономный агент со своим именем, скоростью, фазой пути, направлением,
@@ -1267,6 +1263,7 @@ export default function DeckCityView({
       lineWidthMinPixels: 1,
       stroked: true,
       filled: true,
+      pickable: true,
     });
 
     const roadChains = new PathLayer<RoadChain>({
@@ -1447,10 +1444,12 @@ export default function DeckCityView({
       });
     });
     scenario.amenities.forEach((a) => {
+      const c = a.polygon && a.polygon.length >= 3 ? polygonCentroid(a.polygon) : null;
       const n = nodeMap.get(a.nodeId);
-      if (!n) return;
+      const anchor = c ?? (n ? { x: n.x, y: n.y - 24 } : null);
+      if (!anchor) return;
       labelItems.push({
-        position: toWorld(n.x, n.y - 24, a.type === 'park' ? 22 : 16),
+        position: toWorld(anchor.x, anchor.y, a.type === 'park' ? 22 : 16),
         text:
           a.type === 'bus_stop'
             ? `Остановка · ${a.name}`
@@ -1736,6 +1735,18 @@ export default function DeckCityView({
               const s = object as Amenity;
               return { text: `Остановка · ${s.name}` };
             }
+            if (layer.id === 'schools-layer') {
+              const s = object as Amenity;
+              return { text: `Школа · ${s.name}` };
+            }
+            if (layer.id === 'tagged-layer') {
+              const b = object as Building;
+              return {
+                text: b.tag
+                  ? `${b.name}\n${BUILDING_TAG_LABEL[b.tag]} (нежилое здание)`
+                  : b.name,
+              };
+            }
             return null;
           }}
         />
@@ -1746,6 +1757,8 @@ export default function DeckCityView({
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-teal-300" />вело</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-green-400" />тропа</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-orange-500" />нагрузка</span>
+          <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-amber-600" />школа/тег</span>
+          <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-purple-500" />маршрут А→Б</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-sky-400" />путь Дейкстры</span>
           <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-white bg-blue-500" />по тропинке</span>
           <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-emerald-400 bg-emerald-500" />по траве и полям</span>

@@ -81,6 +81,10 @@ export default function AuditDashboardModal({
 
   if (!isOpen) return null;
 
+  // Пустой район (нет жилых домов): все метрики честно нулевые, считать
+  // нечего — вместо таблиц с нулями показываем, с чего начать.
+  const isEmptyDistrict = metrics.totalResidents === 0;
+
   const busDelta = metrics.weightedAvgBusDistM - baseMetrics.weightedAvgBusDistM;
   const parkDelta = metrics.parkAccessPercent - baseMetrics.parkAccessPercent;
   const schoolDelta = metrics.schoolAccessPercent - baseMetrics.schoolAccessPercent;
@@ -207,12 +211,14 @@ export default function AuditDashboardModal({
       : '';
 
   // Алгоритмические выводы — только из реальных метрик, без выдумок.
+  // Совет привязан к типу сервиса: сквер строится контуром, соцобъекты —
+  // тегом корпуса (сквер тегом не ставится).
   const coverages = [
-    { label: 'скверы', value: metrics.parkAccessPercent },
-    { label: 'школы', value: metrics.schoolAccessPercent },
-    { label: 'полиция', value: metrics.policeAccessPercent },
-    { label: 'медицина', value: metrics.hospitalAccessPercent },
-    { label: 'магазины', value: metrics.shopAccessPercent },
+    { label: 'скверы', value: metrics.parkAccessPercent, advice: 'добавьте сквер инструментом «Сквер»' },
+    { label: 'школы', value: metrics.schoolAccessPercent, advice: 'ПКМ по дому → тег «Школа»' },
+    { label: 'полиция', value: metrics.policeAccessPercent, advice: 'ПКМ по дому → тег «Полиция»' },
+    { label: 'медицина', value: metrics.hospitalAccessPercent, advice: 'ПКМ по дому → тег «Больница»' },
+    { label: 'магазины', value: metrics.shopAccessPercent, advice: 'ПКМ по дому → тег «Магазин»' },
   ];
   const weakest = coverages.reduce((a, b) => (b.value < a.value ? b : a));
   const recommendations: { tone: 'good' | 'warn' | 'bad'; text: string }[] = [];
@@ -225,13 +231,21 @@ export default function AuditDashboardModal({
   } else {
     recommendations.push({ tone: 'good', text: 'Баланс жителей не изменился: пути в пределах шума ±5 м.' });
   }
+  // Нет маршрутов вообще (ни одной достижимой остановки) — это не
+  // «подземные переходы», а отсутствие остановок: советуем именно их.
+  const hasAnyBusRoute = Object.values(metrics.busPaths).some((p) => p !== null);
   if (metrics.mobilityIndex < 100) {
-    recommendations.push({ tone: 'warn', text: `Безбарьерность ${metrics.mobilityIndex}%: часть путей идёт через подземные переходы — замените их зебрами у домов МГН.` });
+    recommendations.push({
+      tone: 'warn',
+      text: hasAnyBusRoute
+        ? `Безбарьерность ${metrics.mobilityIndex}%: часть путей идёт через подземные переходы — замените их зебрами у домов МГН.`
+        : 'Маршрутов до остановок нет: добавьте остановку — ПКМ по дороге.',
+    });
   } else {
     recommendations.push({ tone: 'good', text: 'Все пешеходные пути доступны МГН (100%).' });
   }
   if (weakest.value < 100) {
-    recommendations.push({ tone: 'warn', text: `Самое слабое покрытие — ${weakest.label}: ${weakest.value}%. Точка роста — ПКМ по дому → тег соцобъекта.` });
+    recommendations.push({ tone: 'warn', text: `Самое слабое покрытие — ${weakest.label}: ${weakest.value}%. Точка роста — ${weakest.advice}.` });
   } else {
     recommendations.push({ tone: 'good', text: 'Покрытие по всем пяти сервисам — 100% жителей.' });
   }
@@ -288,6 +302,24 @@ export default function AuditDashboardModal({
         </div>
 
         {/* Сводные KPI-карточки */}
+        {isEmptyDistrict ? (
+          <div className="mt-5 rounded-3xl border border-white/60 bg-white/40 p-5 shadow-sm dark:border-white/10 dark:bg-white/5">
+            <h3 className="text-sm font-black tracking-tight text-gray-900 dark:text-gray-100">
+              Пока нечего считать
+            </h3>
+            <p className="mt-1.5 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+              В районе нет жилых домов, поэтому все метрики нулевые — это не ошибка
+              расчёта. Добавьте застройку и инфраструктуру, затем откройте аналитику снова.
+            </p>
+            <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs leading-relaxed text-gray-700 dark:text-gray-200">
+              <li><b>Дом</b> — поставьте жилые корпуса контуром на чертеже;</li>
+              <li><b>ПКМ по дороге</b> — добавьте остановки у домов;</li>
+              <li><b>Сквер</b> и теги корпусов (ПКМ по дому) — зелень и сервисы;</li>
+              <li><b>📌 Зафиксировать ДО</b> — точка для сравнения «Было / Стало».</li>
+            </ol>
+          </div>
+        ) : (
+        <>
         <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-2xl border border-white/60 bg-white/40 p-3 shadow-sm dark:border-white/10 dark:bg-white/5">
             <div className="text-[10px] font-bold uppercase text-gray-500 dark:text-gray-400">Путь к транспорту</div>
@@ -513,6 +545,8 @@ export default function AuditDashboardModal({
             ))}
           </ul>
         </div>
+        </>
+        )}
 
         {/* Футер с кнопкой закрытия */}
         <div className="mt-6 flex justify-end border-t border-white/60 pt-4 dark:border-white/15">

@@ -14,11 +14,23 @@ export function computePolygonAreaM2(points: { x: number; y: number }[]): number
   return Math.abs(area / 2);
 }
 
+export function polygonCentroid(points: { x: number; y: number }[]): { x: number; y: number } {
+  if (points.length === 0) return { x: 0, y: 0 };
+  let sx = 0;
+  let sy = 0;
+  for (const p of points) {
+    sx += p.x;
+    sy += p.y;
+  }
+  return { x: sx / points.length, y: sy / points.length };
+}
+
 /**
  * Поиск ближайшего узла графа к координатам клика.
+ * Пустой граф — пустая строка: фантомный 'n1' раньше вешал гейт в никуда.
  */
 export function findClosestNodeId(x: number, y: number, nodes: GraphNode[]): string {
-  let best = nodes[0]?.id ?? 'n1';
+  let best = nodes[0]?.id ?? '';
   let minD = Infinity;
   for (const n of nodes) {
     const d = Math.hypot(n.x - x, n.y - y);
@@ -28,6 +40,16 @@ export function findClosestNodeId(x: number, y: number, nodes: GraphNode[]): str
     }
   }
   return best;
+}
+
+export function resolveGateNodeId(
+  nodes: GraphNode[],
+  gateId: string,
+  x: number,
+  y: number,
+): string {
+  if (gateId && nodes.some((n) => n.id === gateId)) return gateId;
+  return findClosestNodeId(x, y, nodes);
 }
 
 /**

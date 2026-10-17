@@ -12,7 +12,7 @@ import ProjectsModal from '@/components/city/ProjectsModal';
 import AuditDashboardModal, { HistorySnapshot } from '@/components/city/AuditDashboardModal';
 import { EMPTY_DISTRICT } from '@/lib/city-engine/presets';
 import { calculateMetrics, computeResidentImpact } from '@/lib/city-engine/metrics';
-import { computePolygonAreaM2, findClosestNodeId, splitEdgeAt } from '@/lib/city-engine/geometry';
+import { computePolygonAreaM2, findClosestNodeId, polygonCentroid, splitEdgeAt } from '@/lib/city-engine/geometry';
 import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
 import { uniqueStamp } from '@/lib/city-engine/ids';
 import { DistrictScenario, Building, BuildingTag, BUILDING_TAG_LABEL, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
@@ -27,6 +27,15 @@ const DeckCityView = dynamic(() => import('@/components/city/DeckCityView'), {
     </div>
   ),
 });
+
+function nextBuildingName(buildings: Building[]): string {
+  let max = 0;
+  for (const b of buildings) {
+    const m = /^Корпус (\d+)/.exec(b.name);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `Корпус ${max + 1} (Кастом)`;
+}
 
 export default function WorkspacePage() {
   const { ready, token } = useAuth();
@@ -44,7 +53,8 @@ export default function WorkspacePage() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
-  // Маршрут А → Б: точки ставит пользователь через ПКМ на 2D-карте,
+  // Маршрут А → Б: точки ставит пользователь через ПКМ только в 3D
+  // (DeckCityView: unproject → снап к узлу), 2D лишь показывает линию и точку А;
   // путь считают умным Дейкстрой; те же узлы идут в 3D человечкам.
   const [route, setRoute] = useState<RouteSelection | null>(null);
 
@@ -213,11 +223,12 @@ export default function WorkspacePage() {
       const area = computePolygonAreaM2(points);
       const floors = 12;
       const estimatedResidents = Math.max(30, Math.round((area * floors) / 32));
-      const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
+      const c = polygonCentroid(points);
+      const gateNodeId = findClosestNodeId(c.x, c.y, prev.nodes);
 
       const newBuilding: Building = {
         id: `b-${uniqueStamp()}`,
-        name: `Корпус ${prev.buildings.length + 1} (Кастом)`,
+        name: nextBuildingName(prev.buildings),
         address: 'Проектируемый квартал',
         floors,
         residentsPerFloor: Math.round(estimatedResidents / floors),
@@ -239,7 +250,8 @@ export default function WorkspacePage() {
 
   const handleAddPolyPark = (points: { x: number; y: number }[]) => {
     setCurrentScenario((prev) => {
-      const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
+      const c = polygonCentroid(points);
+      const gateNodeId = findClosestNodeId(c.x, c.y, prev.nodes);
       const newAmenity: Amenity = {
         id: `park-${uniqueStamp()}`,
         name: 'Проектируемый сквер',
@@ -345,7 +357,8 @@ export default function WorkspacePage() {
       const polygon = b.polygon?.map((p) => ({ x: p.x + (x - ox), y: p.y + (y - oy) }));
       const nx = polygon ? polygon[0].x : x;
       const ny = polygon ? polygon[0].y : y;
-      const gateNodeId = prev.nodes.length > 0 ? findClosestNodeId(nx, ny, prev.nodes) : b.gateNodeId;
+      const c = polygon && polygon.length > 0 ? polygonCentroid(polygon) : { x: nx, y: ny };
+      const gateNodeId = prev.nodes.length > 0 ? findClosestNodeId(c.x, c.y, prev.nodes) : b.gateNodeId;
       return {
         ...prev,
         buildings: prev.buildings.map((bb) =>
@@ -396,21 +409,30 @@ export default function WorkspacePage() {
       const dx = nTo.x - nFrom.x;
       const dy = nTo.y - nFrom.y;
       const len = Math.hypot(dx, dy);
-      const nx = len > 0 ? -dy / len : 0;
-      const ny = len > 0 ? dx / len : 0;
+      if (len === 0) return prev;
+      const nx = -dy / len;
+      const ny = dx / len;
+
+      const cut = splitEdgeAt(prev, edgeId, px, py);
+      if (!cut) {
+        showHint('Здесь переход не построить');
+        return prev;
+      }
+      const center = cut.scenario.nodes.find((n) => n.id === cut.nodeId);
+      if (!center) return prev;
 
       const n1: GraphNode = {
         id: `nc-${uniqueStamp()}-1`,
-        x: Math.round(px + nx * 18),
-        y: Math.round(py + ny * 18),
+        x: Math.round(center.x + nx * 18),
+        y: Math.round(center.y + ny * 18),
         label: 'Створ перехода',
         type: 'intersection',
         isCustom: true,
       };
       const n2: GraphNode = {
         id: `nc-${uniqueStamp()}-2`,
-        x: Math.round(px - nx * 18),
-        y: Math.round(py - ny * 18),
+        x: Math.round(center.x - nx * 18),
+        y: Math.round(center.y - ny * 18),
         label: 'Створ перехода',
         type: 'intersection',
         isCustom: true,
@@ -426,8 +448,26 @@ export default function WorkspacePage() {
         isAccessible: !isUnderpass,
         isCustom: true,
       };
+      // Створы обязаны сидеть на графе: половинки зебры от узла разреза
+      // геометрически лежат на линии n1–n2 (центр — середина створов),
+      // поэтому визуально ничего не добавляют, но компоненту связывают.
+      const tieM = isUnderpass ? 27 : 18;
+      const mkTie = (n: GraphNode, suffix: string): GraphEdge => ({
+        id: `cxt-${uniqueStamp()}-${suffix}`,
+        from: center.id,
+        to: n.id,
+        lengthM: tieM,
+        type: isUnderpass ? 'underpass' : 'crossing',
+        isActive: true,
+        isAccessible: !isUnderpass,
+        isCustom: true,
+      });
 
-      return { ...prev, nodes: [...prev.nodes, n1, n2], edges: [...prev.edges, crossingEdge] };
+      return {
+        ...cut.scenario,
+        nodes: [...cut.scenario.nodes, n1, n2],
+        edges: [...cut.scenario.edges, crossingEdge, mkTie(n1, '1'), mkTie(n2, '2')],
+      };
     });
     setToolMode('select');
   };
