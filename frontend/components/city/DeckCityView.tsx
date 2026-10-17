@@ -911,6 +911,14 @@ export default function DeckCityView({
     return () => cancelAnimationFrame(raf);
   }, [simPlaying, simSpeed, reducedMotion]);
 
+  // Пауза замораживает сцену, а не опустошает её: при остановке петли
+  // один раз фиксируем текущие позиции (иначе displayAgents остаётся []).
+  // Покрывает и старт с паузой, и возврат в 3D после размонтирования.
+  useEffect(() => {
+    if (simPlaying || reducedMotion) return;
+    setDisplayAgents(agentsRef.current.map(agentToDisplay));
+  }, [simPlaying, reducedMotion, initialAgents]);
+
   // prefers-reduced-motion: один статичный кадр вместо петли — агенты стоят
   // на стартовых дистанциях, геометрия и подписи на месте.
   useEffect(() => {
