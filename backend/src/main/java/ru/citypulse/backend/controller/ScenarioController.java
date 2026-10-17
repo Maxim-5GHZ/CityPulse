@@ -58,6 +58,14 @@ public class ScenarioController {
         .stream().map(ScenarioController::row).toList());
   }
 
+  @GetMapping("/{id}")
+  public ResponseEntity<ScenarioRow> get(
+      Authentication auth, @PathVariable UUID id) {
+    return scenarios.findByIdAndOwnerEmail(id, auth.getName())
+        .map(s -> ResponseEntity.ok(row(s)))
+        .orElseThrow(() -> new NoSuchElementException("Сценарий не найден"));
+  }
+
   @PostMapping
   @Transactional
   public ResponseEntity<ScenarioRow> create(

@@ -75,7 +75,7 @@ pass "403 для USER"
 echo "== scenarios CRUD (POST → GET → PUT → DELETE) =="
 SCENARIO_ID="$(curl -s -X POST "$BASE/scenarios" -H 'Content-Type: application/json' \
   -H "Authorization: Bearer $USER_TOKEN" \
-  -d '{"name":"e2e-variant","graph":{"seed":2040,"nodes":[],"edges":[]}}' \
+  -d '{"name":"e2e-variant","payload":"{\"seed\":2040}"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["id"])')"
 [[ -n "$SCENARIO_ID" ]] || fail "scenario create"
 pass "scenario create $SCENARIO_ID"
@@ -85,11 +85,11 @@ curl -s "$BASE/scenarios" -H "Authorization: Bearer $USER_TOKEN" | grep -q "$SCE
 pass "scenario list"
 
 curl -s "$BASE/scenarios/$SCENARIO_ID" -H "Authorization: Bearer $USER_TOKEN" \
-  | grep -q '"hash":"[0-9a-f]\{40\}"' || fail "scenario hash"
-pass "scenario hash (sha1, 40 hex)"
+  | grep -q '"payload"' || fail "scenario get"
+pass "scenario get (payload)"
 
 RENAMED="$(curl -s -X PUT "$BASE/scenarios/$SCENARIO_ID" -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $USER_TOKEN" -d '{"name":"e2e-variant-2"}')"
+  -H "Authorization: Bearer $USER_TOKEN" -d '{"name":"e2e-variant-2","payload":"{\"seed\":2041}"}')"
 echo "$RENAMED" | grep -q "e2e-variant-2" || fail "scenario rename: $RENAMED"
 pass "scenario rename"
 

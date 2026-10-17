@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Сценарий конструктора «Обнинск 2040»: DistrictState целиком в JSONB.
@@ -25,6 +27,7 @@ public class DistrictScenario {
   private String name;
 
   /** DistrictState как JSON-строка (колонка JSONB). */
+  @JdbcTypeCode(SqlTypes.JSON)
   @Column(nullable = false, columnDefinition = "jsonb")
   private String payload;
 
