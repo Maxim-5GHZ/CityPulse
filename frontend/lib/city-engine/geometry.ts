@@ -1,4 +1,5 @@
 import { DistrictScenario, GraphEdge, GraphNode } from './types';
+import { uniqueStamp } from './ids';
 
 /**
  * Площадь многоугольника по формуле Гаусса (Shoelace formula).
@@ -78,7 +79,7 @@ export function splitEdgeAt(
     return { scenario, nodeId: to.id };
   }
 
-  const stamp = Date.now();
+  const stamp = uniqueStamp();
   const cutId = `n-cut-${stamp}`;
   const cutNode: GraphNode = {
     id: cutId,
@@ -95,6 +96,10 @@ export function splitEdgeAt(
     to: b,
     lengthM: Math.max(5, Math.round(Math.hypot(bx - ax, by - ay))),
     isCustom: true,
+    // Полосы и тротуары унаследованы от разрезанного ребра — бюджет не платит.
+    inheritedLanes: true,
+    inheritedSidewalkLeft: true,
+    inheritedSidewalkRight: true,
   });
   const e1 = mkEdge(`e-cut-${stamp}-a`, edge.from, cutId, from.x, from.y, proj.x, proj.y);
   const e2 = mkEdge(`e-cut-${stamp}-b`, cutId, edge.to, proj.x, proj.y, to.x, to.y);

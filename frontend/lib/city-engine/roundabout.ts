@@ -1,4 +1,5 @@
 import { DistrictScenario, GraphEdge, GraphNode } from './types';
+import { uniqueStamp } from './ids';
 
 /** Радиус кольца в метрах CAD-сетки (1 ед = 1 м). */
 export const RING_RADIUS = 26;
@@ -23,7 +24,7 @@ export function planRoundabout(scenario: DistrictScenario, centerId: string): Ro
     return { ok: false, error: 'Кольцо здесь уже построено' };
   }
 
-  const stamp = Date.now();
+  const stamp = uniqueStamp();
   const nodeMap = new Map(scenario.nodes.map((n) => [n.id, n] as const));
 
   // Активные автодороги, примыкающие к центру.
@@ -42,7 +43,6 @@ export function planRoundabout(scenario: DistrictScenario, centerId: string): Ro
     { ...center, type: 'roundabout', isCustom: true, isRoundabout: true },
   ];
   const newEdges: GraphEdge[] = [];
-  const removedEdgeIds = new Set(incident.map((e) => e.id));
 
   interface Exit {
     angle: number;
@@ -50,14 +50,35 @@ export function planRoundabout(scenario: DistrictScenario, centerId: string): Ro
   }
   const exits: Exit[] = [];
 
-  incident.forEach((edge, i) => {
+  // Годными считаем только примыкания длиной ≥ RING_RADIUS+4: короткое ребро
+  // нельзя обрезать до съезда, поэтому оно остаётся в графе как было
+  // (раньше такие рёбра молча удалялись вместе с остальными примыканиями).
+  const usable = incident.filter((edge) => {
+    const otherId = edge.from === centerId ? edge.to : edge.from;
+    const other = nodeMap.get(otherId);
+    if (!other) return false;
+    return Math.hypot(other.x - center.x, other.y - center.y) >= RING_RADIUS + 4;
+  });
+  const removedEdgeIds = new Set(usable.map((e) => e.id));
+
+  if (usable.length < 3) {
+    const shortCount = incident.length - usable.length;
+    return {
+      ok: false,
+      error:
+        shortCount > 0
+          ? `Для кольца нужно ≥3 примыкающих дороги длиной от ${RING_RADIUS + 4} м (годных: ${usable.length}, слишком коротких: ${shortCount})`
+          : `Для кольца нужно ≥3 примыкающих дороги (сейчас: ${incident.length})`,
+    };
+  }
+
+  usable.forEach((edge, i) => {
     const otherId = edge.from === centerId ? edge.to : edge.from;
     const other = nodeMap.get(otherId);
     if (!other) return;
     const dx = other.x - center.x;
     const dy = other.y - center.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < RING_RADIUS + 4) return; // Слишком короткий отрезок — пропускаем
     const angle = Math.atan2(dy, dx);
     const px = Math.round(center.x + Math.cos(angle) * RING_RADIUS);
     const py = Math.round(center.y + Math.sin(angle) * RING_RADIUS);
@@ -83,12 +104,14 @@ export function planRoundabout(scenario: DistrictScenario, centerId: string): Ro
       to: exitNode.id,
       lengthM: Math.max(10, Math.round(edge.lengthM * ratio)),
       isCustom: true,
+      // Обрезок наследует полосы/тротуары исходного примыкания — не оплачиваются.
+      inheritedLanes: true,
+      inheritedSidewalkLeft: true,
+      inheritedSidewalkRight: true,
     });
   });
 
-  if (exits.length < 3) {
-    return { ok: false, error: 'Примыкания слишком короткие для кольца (радиус 26 м)' };
-  }
+  // Годных примыканий уже проверено ≥3 — съездов хватит на кольцо.
 
   // Дуги между соседними съездами по углу.
   const sorted = [...exits].sort((a, b) => a.angle - b.angle);

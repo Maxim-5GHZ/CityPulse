@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeckGL } from '@deck.gl/react';
 import {
   OrbitView,
@@ -8,7 +8,7 @@ import {
   AmbientLight,
   DirectionalLight,
 } from '@deck.gl/core';
-import type { OrbitViewState } from '@deck.gl/core';
+import type { OrbitViewState, Deck } from '@deck.gl/core';
 import { PolygonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import {
   DistrictScenario,
@@ -29,6 +29,8 @@ interface DeckCityViewProps {
   edgeLoads: Record<string, number>;
   busPaths: Record<string, PathResult | null>;
   parkPaths: Record<string, PathResult | null>;
+  schoolPaths?: Record<string, PathResult | null>;
+  shopPaths?: Record<string, PathResult | null>;
   simPlaying?: boolean;
   simSpeed?: 1 | 2 | 5;
 }
@@ -45,8 +47,9 @@ const Z_UNDER = 0.35; // тоннель — под дорогой, но над �
 const Z_ROAD = 0.6; // проезжая часть
 const Z_RING = 0.65; // кольцо — чуть выше примыканий
 const Z_SIDEWALK = 0.9; // тротуары/переходы/тропы — над асфальтом
-const Z_FLOW = 2; // головы потоков — над разметкой
-const Z_ACTIVE_PATH = 2.5; // активный путь Дейкстры — поверх потоков
+const Z_GRASS_WALK = 0.85; // пешеходы по траве и полям — на уровне лужайки
+const Z_PAVED_WALK = 1.4; // пешеходы на приподнятом тротуаре
+const Z_ACTIVE_PATH = 2.2; // активный путь Дейкстры — поверх пешеходов
 const Z_BUS_STOP = 3;
 
 // Ширина полотна (метры).
@@ -75,19 +78,28 @@ const PARK_RADIUS_DIVISOR = 5;
 const PARK_RADIUS_MIN = 28;
 const PARK_RADIUS_MAX = 70;
 
-// Скорость «головы» потоков на ×1, м/с: динамика видна без streak-эффекта
-// (было 45 м/с ≈ 162 км/ч).
-const FLOW_SPEED_BASE = 12;
-
-// Люди-точками: голова рейса + шлейф из точек позади (единицы — метры мира).
-const FLOW_DOT_RADIUS = 3.5; // человек — виден и вблизи, и издалека
-const FLOW_DOT_MIN_PIXELS = 3; // точки не схлопываются на дальнем зуме (демо с проектора)
-const FLOW_HALO_RADIUS = 9; // мягкое свечение вокруг человека
-const FLOW_TRAIL_DOTS = 4; // точек шлейфа за головой — направление читается без лент
-const FLOW_DOT_SPACING_M = 12; // шаг шлейфа
-
 // Ширина активного пути Дейкстры (метры).
 const ACTIVE_PATH_WIDTH = 7;
+
+// Цветовая палитра одежды горожан: живые, но некислотные городские цвета.
+const CITIZEN_PALETTE: [number, number, number][] = [
+  [37, 99, 235], // индиго
+  [16, 185, 129], // изумрудный
+  [217, 119, 6], // охра / тёплый песок
+  [225, 29, 72], // рубиновый
+  [124, 58, 237], // фиолетовый
+  [14, 165, 233], // лазурный
+  [234, 88, 12], // терракотовый
+  [226, 232, 240], // светлый беж
+  [74, 222, 128], // оливковый
+  [244, 114, 182], // пудровый
+];
+
+const CITIZEN_NAMES = [
+  'Иван', 'Анна', 'Дмитрий', 'Мария', 'Алексей',
+  'Елена', 'Сергей', 'Ольга', 'Михаил', 'Полина',
+  'Артём', 'Дарья', 'Никита', 'Екатерина', 'Роман',
+];
 
 // Подошва корпуса в координатах САПР: полигон как есть, иначе прямоугольник
 // с поворотом как в SVG 2D-карты (rotate(a) по часовой при a>0 в Y-вниз: знак +a).
@@ -180,29 +192,10 @@ function buildRingPaths(edges: GraphEdge[], nodeMap: Map<string, GraphNode>): Ve
   return paths;
 }
 
-// Класс окраски ребра: цепочка склеивается только из рёбер одного класса,
-// иначе один объект PathLayer не смог бы показать heat по длине.
-type RoadPaint = 'off' | 'crit' | 'warn' | 'on';
-
-function roadPaintOf(e: GraphEdge, edgeLoads: Record<string, number>): RoadPaint {
-  if (!e.isActive) return 'off';
-  const load = edgeLoads[e.id] || 0;
-  if (load > HEAT_CRIT) return 'crit';
-  if (load > HEAT_WARN) return 'warn';
-  return 'on';
-}
-
-const ROAD_PAINT_COLOR: Record<RoadPaint, [number, number, number, number]> = {
-  off: [239, 68, 68, 220],
-  crit: [239, 68, 68, 230],
-  warn: [249, 115, 22, 230],
-  on: [51, 65, 85, 255],
-};
-
 interface RoadChain {
   path: Vec3[];
   edgeIds: string[];
-  paint: RoadPaint;
+  isActive: boolean;
   width: number;
 }
 
@@ -210,11 +203,12 @@ interface RoadChain {
 // объектом, концы — только на тупиках. Иначе «цепочка сосисок»: круглый конец
 // 22-метрового полотна на каждом узле даёт утолщения, которые глаз считывает
 // как неровный край дороги. Цепь рвётся на поворотах (порог скалярного
-// произведения 0.5), смене ширины и смене класса окраски.
+// произведения 0.5), смене ширины и смене активности. Класса окраски в цепи
+// больше нет: полотно всегда благородный асфальт, нагрузка видна только
+// на тротуарах (см. minor-ways-layer) — дорога никогда не краснеет целиком.
 function chainRoadEdges(
   edges: GraphEdge[],
   nodeMap: Map<string, GraphNode>,
-  edgeLoads: Record<string, number>,
 ): RoadChain[] {
   const roads = edges.filter((e) => e.type === 'road' && !e.isRoundabout);
   if (roads.length === 0) return [];
@@ -230,8 +224,8 @@ function chainRoadEdges(
   for (const seed of roads) {
     if (used.has(seed.id)) continue;
     used.add(seed.id);
-    const paint = roadPaintOf(seed, edgeLoads);
     const width = widthOf(seed);
+    const active = seed.isActive;
     const seq: string[] = [seed.from, seed.to];
     const ids: string[] = [seed.id];
     const extend = (end: 'head' | 'tail'): void => {
@@ -249,7 +243,7 @@ function chainRoadEdges(
         for (const cand of atNode.get(curId) ?? []) {
           if (used.has(cand.id)) continue;
           if (widthOf(cand) !== width) continue;
-          if (roadPaintOf(cand, edgeLoads) !== paint) continue;
+          if (cand.isActive !== active) continue;
           const otherId = cand.from === curId ? cand.to : cand.from;
           if (otherId === prevId) continue;
           const other = nodeMap.get(otherId);
@@ -278,7 +272,7 @@ function chainRoadEdges(
       const n = nodeMap.get(id);
       if (n) pts.push(toWorld(n.x, n.y, Z_ROAD));
     });
-    if (pts.length >= 2) chains.push({ path: pts, edgeIds: ids, paint, width });
+    if (pts.length >= 2) chains.push({ path: pts, edgeIds: ids, isActive: active, width });
   }
   return chains;
 }
@@ -297,73 +291,352 @@ const STREET_LABELS = [
   { edgeId: 'e-k1', text: 'ул. Энгельса', offX: 0, offY: 30 },
 ] as const;
 
-interface Trip {
+export type PathSurfaceType = 'trophinka' | 'trava';
+
+interface PedestrianAgent {
+  id: string;
+  name: string;
+  buildingId: string;
+  fromName: string;
+  toName: string;
+  activity: string;
+  pathType: PathSurfaceType;
   path: Vec3[];
-  timestamps: number[];
+  cumDist: number[];
+  totalDist: number;
+  speed: number; // м/с
+  dist: number; // текущая позиция по длине пути (м)
+  direction: 1 | -1; // 1 — к цели, -1 — обратно домой
+  color: [number, number, number];
+  pauseRemaining: number;
+}
+
+interface DisplayPedestrian {
+  id: string;
+  name: string;
+  buildingId: string;
+  fromName: string;
+  toName: string;
+  activity: string;
+  pathType: PathSurfaceType;
+  x: number;
+  y: number;
+  z: number;
+  speed: number;
+  direction: 1 | -1;
   color: [number, number, number];
 }
 
-// Путь Дейкстры → «рейс»: метки времени = накопленная длина (метры), хвост догоняет голову.
-function pathToTrip(
-  ids: string[],
-  nodeMap: Map<string, GraphNode>,
-  z: number,
-  color: [number, number, number],
-): Trip | null {
-  const pts: Vec3[] = [];
-  ids.forEach((id) => {
-    const n = nodeMap.get(id);
-    if (n) pts.push(toWorld(n.x, n.y, z));
-  });
-  if (pts.length < 2) return null;
-  const timestamps: number[] = [0];
-  for (let i = 1; i < pts.length; i++) {
-    timestamps.push(
-      timestamps[i - 1] +
-        Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]),
-    );
+// --- Геометрические проверки: пешеходы не ходят через шоссе и дома ---
+
+function lineSegmentsIntersect(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number,
+  margin = 0.04,
+): boolean {
+  const d = (x2 - x1) * (y4 - y3) - (y2 - y1) * (x4 - x3);
+  if (Math.abs(d) < 1e-9) return false;
+  const t = ((x3 - x1) * (y4 - y3) - (y3 - y1) * (x4 - x3)) / d;
+  const u = ((x3 - x1) * (y2 - y1) - (y3 - y1) * (x2 - x1)) / d;
+  return t >= margin && t <= 1 - margin && u >= margin && u <= 1 - margin;
+}
+
+function isPointInsidePoly(px: number, py: number, poly: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0];
+    const yi = poly[i][1];
+    const xj = poly[j][0];
+    const yj = poly[j][1];
+    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
   }
-  return { path: pts, timestamps, color };
+  return inside;
 }
 
-interface FlowDot {
-  position: Vec3;
-  color: [number, number, number];
+function segmentHitsPolygon(
+  x1: number, y1: number, x2: number, y2: number,
+  poly: [number, number][],
+): boolean {
+  if (poly.length < 3) return false;
+  if (isPointInsidePoly(x1, y1, poly) || isPointInsidePoly(x2, y2, poly)) return true;
+  // Пробуем середины: отрезок может целиком лежать внутри полигона,
+  // не задевая рёбер концами.
+  const midX = (x1 + x2) / 2;
+  const midY = (y1 + y2) / 2;
+  if (isPointInsidePoly(midX, midY, poly)) return true;
+  const q1X = x1 * 0.75 + x2 * 0.25;
+  const q1Y = y1 * 0.75 + y2 * 0.25;
+  if (isPointInsidePoly(q1X, q1Y, poly)) return true;
+  const q3X = x1 * 0.25 + x2 * 0.75;
+  const q3Y = y1 * 0.25 + y2 * 0.75;
+  if (isPointInsidePoly(q3X, q3Y, poly)) return true;
+
+  for (let i = 0; i < poly.length; i++) {
+    const next = (i + 1) % poly.length;
+    if (
+      lineSegmentsIntersect(
+        x1, y1, x2, y2,
+        poly[i][0], poly[i][1], poly[next][0], poly[next][1],
+        0.01,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
-// Точка на пути на «времени» t (метки — метры): бинпоиск сегмента + лерп.
-// Хвост идёт назад по вершинам, а не по прямой, — шлейф лежит на дороге
-// и не срезает повороты.
-function pointAtTime(trip: Trip, t: number): Vec3 {
-  const { path, timestamps } = trip;
-  if (t <= 0) return path[0];
-  const last = timestamps.length - 1;
-  if (t >= timestamps[last]) return path[last];
+function segmentHitsAnyBuilding(
+  x1: number, y1: number, x2: number, y2: number,
+  buildings: Building[],
+): boolean {
+  for (const b of buildings) {
+    if (segmentHitsPolygon(x1, y1, x2, y2, buildingFootprintCAD(b))) return true;
+  }
+  return false;
+}
+
+// Запрет пересечения шоссе вне санкционированных переходов: пересечь
+// проезжую часть можно только по створам зебр/тоннелей из графа УДС,
+// срезка напрямик через type==='road' запрещена.
+function segmentCrossesHighway(
+  x1: number, y1: number, x2: number, y2: number,
+  scenario: DistrictScenario,
+  nodeMap: Map<string, GraphNode>,
+): boolean {
+  for (const edge of scenario.edges) {
+    if (edge.type !== 'road') continue;
+    const u = nodeMap.get(edge.from);
+    const v = nodeMap.get(edge.to);
+    if (!u || !v) continue;
+    if (lineSegmentsIntersect(x1, y1, x2, y2, u.x, u.y, v.x, v.y, 0.05)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+interface GrassPoint {
+  x: number;
+  y: number;
+}
+
+// Срезка пути по газону / открытым полям (стринг-пуллинг): из текущей точки
+// тянемся к самой дальней достижимой — отрезок годен, пока не задевает здания
+// и не пересекает шоссе. Возвращает подмножество исходных точек (те же ссылки).
+function shortcutRouteAcrossGrass(
+  rawPoints: GrassPoint[],
+  buildings: Building[],
+  scenario: DistrictScenario,
+  nodeMap: Map<string, GraphNode>,
+): GrassPoint[] {
+  if (rawPoints.length <= 2) return rawPoints;
+  const result: GrassPoint[] = [rawPoints[0]];
+  let curr = 0;
+  while (curr < rawPoints.length - 1) {
+    let furthest = curr + 1;
+    for (let candidate = rawPoints.length - 1; candidate > curr + 1; candidate--) {
+      const pA = rawPoints[curr];
+      const pB = rawPoints[candidate];
+      const hitsB = segmentHitsAnyBuilding(pA.x, pA.y, pB.x, pB.y, buildings);
+      const crossesR = segmentCrossesHighway(pA.x, pA.y, pB.x, pB.y, scenario, nodeMap);
+      if (!hitsB && !crossesR) {
+        furthest = candidate;
+        break;
+      }
+    }
+    result.push(rawPoints[furthest]);
+    curr = furthest;
+  }
+  return result;
+}
+
+// Построение маршрута по тропинкам / тротуарам (приоритизированный, по графу УДС).
+// sidePreference: -1 — тротуар слева, +1 — справа, 0 — строго по оси
+// (для активного пути Дейкстры: линия-подсветка идёт по центру, а не по обочине).
+function buildPavedRoute(
+  nodeIds: string[],
+  scenario: DistrictScenario,
+  nodeMap: Map<string, GraphNode>,
+  sidePreference: -1 | 0 | 1,
+  jitter: number,
+  targetZ = Z_PAVED_WALK,
+): Vec3[] {
+  if (nodeIds.length < 2) return [];
+
+  const edgeLookup = new Map<string, GraphEdge>();
+  for (const e of scenario.edges) {
+    edgeLookup.set(`${e.from}->${e.to}`, e);
+    edgeLookup.set(`${e.to}->${e.from}`, e);
+  }
+
+  const result: Vec3[] = [];
+
+  for (let i = 0; i < nodeIds.length; i++) {
+    const curId = nodeIds[i];
+    const curNode = nodeMap.get(curId);
+    if (!curNode) continue;
+
+    // Определяем прилегающее ребро к следующему или предыдущему узлу.
+    const nextId = nodeIds[i + 1];
+    const prevId = nodeIds[i - 1];
+    const edge = nextId
+      ? edgeLookup.get(`${curId}->${nextId}`)
+      : prevId
+        ? edgeLookup.get(`${prevId}->${curId}`)
+        : null;
+
+    let px = curNode.x;
+    let py = curNode.y;
+
+    if (edge && edge.type === 'road' && sidePreference !== 0) {
+      const refNode = nextId
+        ? nodeMap.get(nextId)
+        : prevId
+          ? nodeMap.get(prevId)
+          : null;
+      if (refNode) {
+        const dx = refNode.x - curNode.x;
+        const dy = refNode.y - curNode.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = -dy / len;
+        const ny = dx / len;
+        const halfW = edge.lanes === 4 ? 11 : 7;
+        const offset = (halfW + 2.4) * sidePreference + jitter;
+        px += nx * offset;
+        py += ny * offset;
+      }
+    } else if (edge && (edge.type === 'sidewalk' || edge.type === 'park_path')) {
+      px += jitter * 0.4;
+      py += jitter * 0.4;
+    }
+
+    result.push(toWorld(px, py, targetZ));
+  }
+
+  return result;
+}
+
+// Построение маршрута срезкой через траву и поля: углы кварталов срезаются
+// напрямик по лужайкам (стринг-пуллинг), шоссе и дома не задеваются.
+// Нюанс: хорда между соседними узлами графа совпадает с ребром УДС — если это
+// проезжая часть, идём по тротуару вдоль неё (сдвиг), а не по асфальту.
+function buildGrassRoute(
+  nodeIds: string[],
+  scenario: DistrictScenario,
+  nodeMap: Map<string, GraphNode>,
+  jitter: number,
+  targetZ = Z_GRASS_WALK,
+): Vec3[] {
+  if (nodeIds.length < 2) return [];
+
+  const rawPts: GrassPoint[] = [];
+  const rawIds: string[] = [];
+  nodeIds.forEach((id) => {
+    const n = nodeMap.get(id);
+    if (n) {
+      rawPts.push({ x: n.x, y: n.y });
+      rawIds.push(id);
+    }
+  });
+  if (rawPts.length < 2) return [];
+
+  const cutPts = shortcutRouteAcrossGrass(rawPts, scenario.buildings, scenario, nodeMap);
+  const rawIndex = new Map<GrassPoint, number>();
+  rawPts.forEach((p, i) => rawIndex.set(p, i));
+
+  const edgeLookup = new Map<string, GraphEdge>();
+  for (const e of scenario.edges) {
+    edgeLookup.set(`${e.from}->${e.to}`, e);
+    edgeLookup.set(`${e.to}->${e.from}`, e);
+  }
+
+  const result: Vec3[] = [];
+  for (let s = 0; s < cutPts.length - 1; s++) {
+    const a = cutPts[s];
+    const b = cutPts[s + 1];
+    let ax = a.x + jitter * 0.3;
+    let ay = a.y + jitter * 0.3;
+    let bx = b.x + jitter * 0.3;
+    let by = b.y + jitter * 0.3;
+
+    // Хорда = ребро проезжей части: уходим на тротуар вдоль неё.
+    const ia = rawIndex.get(a);
+    const ib = rawIndex.get(b);
+    if (ia !== undefined && ib !== undefined && Math.abs(ia - ib) === 1) {
+      const edge = edgeLookup.get(`${rawIds[ia]}->${rawIds[ib]}`);
+      if (edge && edge.type === 'road') {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const halfW = edge.lanes === 4 ? 11 : 7;
+        const off = halfW + 2.4;
+        ax = a.x + (-dy / len) * off;
+        ay = a.y + (dx / len) * off;
+        bx = b.x + (-dy / len) * off;
+        by = b.y + (dx / len) * off;
+      }
+    }
+
+    if (s === 0) result.push(toWorld(ax, ay, targetZ));
+    result.push(toWorld(bx, by, targetZ));
+  }
+
+  return result;
+}
+
+function computeCumulativeDistances(pts: Vec3[]): number[] {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) {
+    const dx = pts[i][0] - pts[i - 1][0];
+    const dy = pts[i][1] - pts[i - 1][1];
+    const dz = pts[i][2] - pts[i - 1][2];
+    cum.push(cum[i - 1] + Math.hypot(dx, dy, dz));
+  }
+  return cum;
+}
+
+// Точка на пути на дистанции dist (метры): бинпоиск сегмента + лерп.
+function samplePointOnPath(pts: Vec3[], cum: number[], dist: number): Vec3 {
+  if (dist <= 0) return pts[0];
+  const last = pts.length - 1;
+  if (dist >= cum[last]) return pts[last];
   let lo = 0;
   let hi = last;
   while (lo + 1 < hi) {
     const mid = (lo + hi) >> 1;
-    if (timestamps[mid] <= t) lo = mid;
+    if (cum[mid] <= dist) lo = mid;
     else hi = mid;
   }
-  const t0 = timestamps[lo];
-  const seg = timestamps[hi] - t0 || 1;
-  const k = (t - t0) / seg;
-  const a = path[lo];
-  const b = path[hi];
-  return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
+  const span = cum[hi] - cum[lo] || 1;
+  const t = (dist - cum[lo]) / span;
+  const a = pts[lo];
+  const b = pts[hi];
+  return [
+    a[0] + (b[0] - a[0]) * t,
+    a[1] + (b[1] - a[1]) * t,
+    a[2] + (b[2] - a[2]) * t,
+  ];
 }
 
-// Рейс → люди-точками: голова + шлейф позади. Время зациклено длиной пути,
-// поэтому поток бесконечный без телепортов в начало кадра.
-function sampleTripDots(trip: Trip, time: number): FlowDot[] {
-  const total = trip.timestamps[trip.timestamps.length - 1] || 1;
-  const dots: FlowDot[] = [];
-  for (let i = 0; i <= FLOW_TRAIL_DOTS; i++) {
-    const t = (((time - i * FLOW_DOT_SPACING_M) % total) + total) % total;
-    dots.push({ position: pointAtTime(trip, t), color: trip.color });
-  }
-  return dots;
+function agentToDisplay(ag: PedestrianAgent): DisplayPedestrian {
+  const pt = samplePointOnPath(ag.path, ag.cumDist, ag.dist);
+  return {
+    id: ag.id,
+    name: ag.name,
+    buildingId: ag.buildingId,
+    fromName: ag.fromName,
+    toName: ag.toName,
+    activity: ag.activity,
+    pathType: ag.pathType,
+    x: pt[0],
+    y: pt[1],
+    z: pt[2],
+    speed: ag.speed,
+    direction: ag.direction,
+    color: ag.color,
+  };
 }
 
 // Архитектурный свет для экструдированных корпусов (синглтоны — вне рендера).
@@ -384,6 +657,8 @@ export default function DeckCityView({
   edgeLoads,
   busPaths,
   parkPaths,
+  schoolPaths = {},
+  shopPaths = {},
   simPlaying = true,
   simSpeed = 1,
 }: DeckCityViewProps) {
@@ -392,29 +667,195 @@ export default function DeckCityView({
     [scenario.nodes],
   );
 
-  const busTrips = useMemo(
-    () =>
-      Object.values(busPaths)
-        .map((p) => (p ? pathToTrip(p.pathNodeIds, nodeMap, Z_FLOW, [96, 165, 250]) : null))
-        .filter((t): t is Trip => t !== null),
-    [busPaths, nodeMap],
-  );
-  const parkTrips = useMemo(
-    () =>
-      Object.values(parkPaths)
-        .map((p) => (p ? pathToTrip(p.pathNodeIds, nodeMap, Z_FLOW, [52, 211, 153]) : null))
-        .filter((t): t is Trip => t !== null),
-    [parkPaths, nodeMap],
-  );
+  // Генерация пула независимых пешеходов (вразнобой): каждый юнит —
+  // автономный агент со своим именем, скоростью, фазой пути, направлением,
+  // целью (школа/остановка/сквер/магазин) и типом покрытия (тропинка/трава).
+  // Чередуем приоритизированный маршрут по тротуарам и срезку по газонам.
+  const initialAgents = useMemo<PedestrianAgent[]>(() => {
+    const agents: PedestrianAgent[] = [];
+    let globalIdx = 0;
 
-  const maxTime = useMemo(() => {
-    let m = 0;
-    [...busTrips, ...parkTrips].forEach((t) => {
-      const last = t.timestamps[t.timestamps.length - 1] ?? 0;
-      if (last > m) m = last;
+    scenario.buildings.forEach((b) => {
+      const busPath = busPaths[b.id];
+      const parkPath = parkPaths[b.id];
+      const schoolPath = schoolPaths?.[b.id];
+      const shopPath = shopPaths?.[b.id];
+
+      // 1. Школьники: дом <-> школа (школы — и отдельные объекты, и корпуса
+      // с тегом school: оба уже сведены в schoolPaths движком).
+      if (schoolPath && schoolPath.pathNodeIds.length >= 2) {
+        const schoolCount = Math.min(4, Math.max(2, Math.round(b.residents / 300)));
+        for (let k = 0; k < schoolCount; k++) {
+          globalIdx++;
+          const isGrass = k % 2 === 1;
+          const jitter = ((k * 19) % 7 - 3) * 0.45;
+          const path = isGrass
+            ? buildGrassRoute(schoolPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
+            : buildPavedRoute(
+                schoolPath.pathNodeIds,
+                scenario,
+                nodeMap,
+                k % 2 === 0 ? 1 : -1,
+                jitter,
+                Z_PAVED_WALK,
+              );
+          if (path.length < 2) continue;
+          const cumDist = computeCumulativeDistances(path);
+          const totalDist = cumDist[cumDist.length - 1];
+          if (totalDist < 5) continue;
+
+          // Кто-то идёт из школы домой, кто-то из дома в школу.
+          const startsFromSchool = (globalIdx + k) % 2 === 1;
+          const startDist = (globalIdx * 61.3 + k * 31) % totalDist;
+          const speed = 1.1 + ((globalIdx * 13) % 5) * 0.08;
+          agents.push({
+            id: `ped-school-${b.id}-${k}`,
+            name: `${CITIZEN_NAMES[globalIdx % CITIZEN_NAMES.length]} (Ученик)`,
+            buildingId: b.id,
+            fromName: startsFromSchool ? 'Школа' : b.name,
+            toName: startsFromSchool ? b.name : 'Школа',
+            activity: startsFromSchool ? 'Из школы домой' : 'В школу',
+            pathType: isGrass ? 'trava' : 'trophinka',
+            path,
+            cumDist,
+            totalDist,
+            speed,
+            dist: startDist,
+            direction: 1,
+            color: isGrass ? [234, 179, 8] : [249, 115, 22],
+            pauseRemaining: 0,
+          });
+        }
+      }
+
+      // 2. Пешеходы к остановке / с остановки: часть — по тротуарам,
+      // каждый третий срезает через газон/поле.
+      if (busPath && busPath.pathNodeIds.length >= 2) {
+        const busAgentCount = Math.min(5, Math.max(2, Math.round(b.residents / 350)));
+        for (let k = 0; k < busAgentCount; k++) {
+          globalIdx++;
+          const isGrass = k % 3 === 2;
+          const jitter = ((k * 17) % 5 - 2) * 0.55;
+          const path = isGrass
+            ? buildGrassRoute(busPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
+            : buildPavedRoute(
+                busPath.pathNodeIds,
+                scenario,
+                nodeMap,
+                k % 2 === 0 ? 1 : -1,
+                jitter,
+                Z_PAVED_WALK,
+              );
+          if (path.length < 2) continue;
+          const cumDist = computeCumulativeDistances(path);
+          const totalDist = cumDist[cumDist.length - 1];
+          if (totalDist < 5) continue;
+
+          const startsFromStop = (globalIdx + k) % 2 === 1;
+          const startDist = (globalIdx * 73.1 + k * 29) % totalDist;
+          const speed = 1.15 + ((globalIdx * 19) % 7) * 0.06; // ~4.1–5.4 км/ч
+          agents.push({
+            id: `ped-bus-${b.id}-${k}`,
+            name: CITIZEN_NAMES[globalIdx % CITIZEN_NAMES.length],
+            buildingId: b.id,
+            fromName: startsFromStop ? 'Остановка' : b.name,
+            toName: startsFromStop ? b.name : 'Остановка',
+            activity: startsFromStop ? 'С остановки домой' : 'На остановку',
+            pathType: isGrass ? 'trava' : 'trophinka',
+            path,
+            cumDist,
+            totalDist,
+            speed,
+            dist: startDist,
+            direction: 1,
+            color: isGrass
+              ? [16, 185, 129]
+              : CITIZEN_PALETTE[(globalIdx * 3) % CITIZEN_PALETTE.length],
+            pauseRemaining: 0,
+          });
+        }
+      }
+
+      // 3. Пешеходы в сквер: в парк чаще идут по траве и полям.
+      if (parkPath && parkPath.pathNodeIds.length >= 2) {
+        const parkAgentCount = Math.min(3, Math.max(1, Math.round(b.residents / 500)));
+        for (let k = 0; k < parkAgentCount; k++) {
+          globalIdx++;
+          const isGrass = k % 2 === 0;
+          const jitter = ((k * 13) % 5 - 2) * 0.6;
+          const path = isGrass
+            ? buildGrassRoute(parkPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
+            : buildPavedRoute(parkPath.pathNodeIds, scenario, nodeMap, -1, jitter, Z_PAVED_WALK);
+          if (path.length < 2) continue;
+          const cumDist = computeCumulativeDistances(path);
+          const totalDist = cumDist[cumDist.length - 1];
+          if (totalDist < 5) continue;
+
+          const startDist = (globalIdx * 53.7 + k * 37) % totalDist;
+          const speed = 1.05 + ((globalIdx * 11) % 6) * 0.06;
+          agents.push({
+            id: `ped-park-${b.id}-${k}`,
+            name: CITIZEN_NAMES[(globalIdx + 5) % CITIZEN_NAMES.length],
+            buildingId: b.id,
+            fromName: b.name,
+            toName: 'Сквер',
+            activity: isGrass ? 'Прогулка по траве' : 'В сквер',
+            pathType: isGrass ? 'trava' : 'trophinka',
+            path,
+            cumDist,
+            totalDist,
+            speed,
+            dist: startDist,
+            direction: 1,
+            color: [74, 222, 128],
+            pauseRemaining: 0,
+          });
+        }
+      }
+
+      // 4. Пешеходы в магазин / сервисы (один на дом, если путь есть).
+      if (shopPath && shopPath.pathNodeIds.length >= 2) {
+        globalIdx++;
+        const isGrass = globalIdx % 2 === 1;
+        const path = isGrass
+          ? buildGrassRoute(shopPath.pathNodeIds, scenario, nodeMap, 0.4, Z_GRASS_WALK)
+          : buildPavedRoute(shopPath.pathNodeIds, scenario, nodeMap, 1, 0, Z_PAVED_WALK);
+        if (path.length >= 2) {
+          const cumDist = computeCumulativeDistances(path);
+          const totalDist = cumDist[cumDist.length - 1];
+          if (totalDist >= 5) {
+            agents.push({
+              id: `ped-shop-${b.id}`,
+              name: CITIZEN_NAMES[(globalIdx + 3) % CITIZEN_NAMES.length],
+              buildingId: b.id,
+              fromName: b.name,
+              toName: 'Магазин',
+              activity: 'За покупками',
+              pathType: isGrass ? 'trava' : 'trophinka',
+              path,
+              cumDist,
+              totalDist,
+              speed: 1.2,
+              dist: (globalIdx * 43.1) % totalDist,
+              direction: 1,
+              color: [147, 51, 234],
+              pauseRemaining: 0,
+            });
+          }
+        }
+      }
     });
-    return m > 1 ? m : 100;
-  }, [busTrips, parkTrips]);
+
+    return agents;
+  }, [scenario, busPaths, parkPaths, schoolPaths, shopPaths, nodeMap]);
+
+  // Мутабельный массив агентов для симуляции 60 кадров/сек.
+  const agentsRef = useRef<PedestrianAgent[]>([]);
+  useEffect(() => {
+    agentsRef.current = initialAgents.map((a) => ({ ...a }));
+  }, [initialAgents]);
+
+  const [displayAgents, setDisplayAgents] = useState<DisplayPedestrian[]>([]);
 
   // Колбэк выбора через ref: родитель передаёт инлайн-стрелку каждый рендер,
   // ей не место в deps слоёв, иначе статика пересоздаётся постоянно.
@@ -433,36 +874,56 @@ export default function DeckCityView({
     return () => q.removeEventListener('change', fn);
   }, []);
 
-  // Игровая петля «головы» потоков; пауза и скорость — из тулбара симуляции.
-  const [time, setTime] = useState(0);
+  // Игровая петля независимых пешеходов; пауза и скорость — из тулбара.
+  // Уважение к prefers-reduced-motion — ниже: вместо петли один статичный кадр.
   useEffect(() => {
     if (!simPlaying || reducedMotion) return;
     let raf = 0;
     let last = performance.now();
     const loop = (now: number) => {
-      const dt = Math.min(0.1, (now - last) / 1000);
+      const dt = Math.min(0.08, (now - last) / 1000);
       last = now;
-      setTime((t) => (t + dt * FLOW_SPEED_BASE * (simSpeed ?? 1)) % maxTime);
+
+      const mult = simSpeed ?? 1;
+      agentsRef.current.forEach((ag) => {
+        if (ag.pauseRemaining > 0) {
+          ag.pauseRemaining -= dt * mult;
+          return;
+        }
+
+        ag.dist += ag.direction * ag.speed * dt * mult;
+
+        if (ag.dist >= ag.totalDist) {
+          ag.dist = ag.totalDist;
+          ag.direction = -1;
+          ag.pauseRemaining = 1.5 + (ag.speed % 1.5); // отдых перед возвращением
+        } else if (ag.dist <= 0) {
+          ag.dist = 0;
+          ag.direction = 1;
+          ag.pauseRemaining = 2.0 + (ag.speed % 2.0); // дома перед выходом
+        }
+      });
+
+      setDisplayAgents(agentsRef.current.map(agentToDisplay));
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [simPlaying, simSpeed, maxTime, reducedMotion]);
+  }, [simPlaying, simSpeed, reducedMotion]);
 
-  // Время дальше нового maxTime (сценарий сменился) — клампим, иначе кадр
-  // без потоков до первого тика петли.
+  // prefers-reduced-motion: один статичный кадр вместо петли — агенты стоят
+  // на стартовых дистанциях, геометрия и подписи на месте.
   useEffect(() => {
-    setTime((t) => (t > maxTime ? 0 : t));
-  }, [maxTime]);
+    if (!reducedMotion) return;
+    setDisplayAgents(initialAgents.map(agentToDisplay));
+  }, [reducedMotion, initialAgents]);
 
-  const activePathCoords = useMemo(() => {
-    const pts: Vec3[] = [];
-    activePathNodeIds.forEach((id) => {
-      const n = nodeMap.get(id);
-      if (n) pts.push(toWorld(n.x, n.y, Z_ACTIVE_PATH));
-    });
-    return pts;
-  }, [activePathNodeIds, nodeMap]);
+  // Активный маршрут Дейкстры для выделенного дома: линия-подсветка идёт
+  // строго по оси (sidePreference 0 — без сдвига на тротуар).
+  const activePathCoords = useMemo(
+    () => buildPavedRoute(activePathNodeIds, scenario, nodeMap, 0, 0, Z_ACTIVE_PATH),
+    [activePathNodeIds, scenario, nodeMap],
+  );
 
   // Центр кадра — по bbox сценария, а не жёсткий [0,0,0]: кастомные
   // дороги из handleAddRoad иначе уезжают из вида. Однопроходный min/max.
@@ -609,9 +1070,10 @@ export default function DeckCityView({
 
     const roadChains = new PathLayer<RoadChain>({
       id: 'road-chains-layer',
-      data: chainRoadEdges(scenario.edges, nodeMap, edgeLoads),
+      data: chainRoadEdges(scenario.edges, nodeMap),
       getPath: (d) => d.path,
-      getColor: (d) => ROAD_PAINT_COLOR[d.paint],
+      // Проезжая часть — всегда благородный асфальт, вне зависимости от нагрузки.
+      getColor: (d) => (d.isActive ? [45, 55, 72, 255] : [220, 38, 38, 200]),
       getWidth: (d) => d.width,
       widthMinPixels: 2,
       capRounded: false, // торцы только на тупиках — стыки цепи бесшовные
@@ -648,15 +1110,17 @@ export default function DeckCityView({
       },
       getColor: (e) => {
         if (!e.isActive) return [239, 68, 68, 220];
-        // Тепловая карта поверх всех типов: перегруз виден и на тропах.
-        const load = edgeLoads[e.id] || 0;
-        if (load > HEAT_CRIT) return [239, 68, 68, 230];
-        if (load > HEAT_WARN) return [249, 115, 22, 230];
-        if (e.type === 'crossing') return [255, 255, 255, 240];
+        // Свои цвета типов — всегда: зебра белая, вело — teal, тоннель — sky.
+        // Нагрузка подсвечивается только там, где реально идут люди, —
+        // на тротуарах и тропах скверов.
+        if (e.type === 'crossing') return [255, 255, 255, 255];
         if (e.type === 'underpass') return [56, 189, 248, 240];
         if (e.type === 'bike_lane') return [45, 212, 191, 230];
+        const load = edgeLoads[e.id] || 0;
+        if (load > HEAT_CRIT) return [244, 63, 94, 240]; // коралловый при перегрузе
+        if (load > HEAT_WARN) return [245, 158, 11, 240]; // янтарный при высокой нагрузке
         if (e.type === 'park_path') return [74, 222, 128, 230];
-        return [100, 116, 139, 200];
+        return [100, 116, 139, 210];
       },
       getWidth: (e) => (e.type === 'crossing' ? CROSSING_WIDTH : MINOR_WIDTH),
       widthMinPixels: 2,
@@ -848,58 +1312,76 @@ export default function DeckCityView({
     selectedBuildingId,
   ]);
 
-  // Динамика: только точки потоков зависят от time.
-  // Люди-точками: семплируем позиции голов и шлейфов на текущем time.
-  // Подсчёт — микросекунды (рейсов десятки), статика не трогается.
-  const flowLayers = useMemo(() => {
-    const dots: FlowDot[] = [];
-    [...busTrips, ...parkTrips].forEach((trip) => {
-      dots.push(...sampleTripDots(trip, time));
+  // Доступ к Deck для форварда клика: пешеход pickable (тултип), но клик
+  // сквозь него должен выбирать дом под курсором, а не глотаться.
+  const deckRef = useRef<Deck | null>(null);
+  const forwardBuildingClick = useCallback((x: number, y: number): void => {
+    const pick = deckRef.current?.pickObject({
+      x,
+      y,
+      layerIds: ['buildings-3d-layer'],
     });
+    const b = pick?.object as Building | undefined;
+    if (b) selectRef.current(b.id);
+  }, []);
 
-    const halo = new ScatterplotLayer<FlowDot>({
-      id: 'flow-halo',
-      data: dots,
-      getPosition: (d) => d.position,
-      getFillColor: (d) => [...d.color, 64],
-      getRadius: FLOW_HALO_RADIUS,
-      radiusMinPixels: 6,
+  // Динамика: только пешеходы зависят от кадра симуляции, статика не трогается.
+  const pedestrianLayers = useMemo(() => {
+    // 1. Лёгкие тени под пешеходами: на траве — на уровне лужайки,
+    // на тротуаре — на бордюре.
+    const shadows = new ScatterplotLayer<DisplayPedestrian>({
+      id: 'pedestrian-shadows',
+      data: displayAgents,
+      getPosition: (d) => [d.x, d.y, d.pathType === 'trava' ? 0.22 : Z_SIDEWALK + 0.05],
+      getRadius: 1.0,
+      radiusMinPixels: 2,
+      radiusMaxPixels: 6,
+      getFillColor: [15, 23, 42, 110],
       stroked: false,
       pickable: false,
     });
 
-    const people = new ScatterplotLayer<FlowDot>({
-      id: 'flow-dots',
-      data: dots,
-      getPosition: (d) => d.position,
+    // 2. Индивидуальные юниты: на тропинках — с белой каймой, по траве/полям —
+    // с изумрудной. Pickable ради тултипа, клик форвардится дому под курсором.
+    const units = new ScatterplotLayer<DisplayPedestrian>({
+      id: 'pedestrian-units',
+      data: displayAgents,
+      getPosition: (d) => [d.x, d.y, d.z],
+      getRadius: 1.8,
+      radiusMinPixels: 3.5,
+      radiusMaxPixels: 9,
       getFillColor: (d) => [...d.color, 255],
-      getLineColor: [255, 255, 255, 220],
-      getRadius: FLOW_DOT_RADIUS,
-      radiusMinPixels: FLOW_DOT_MIN_PIXELS,
+      getLineColor: (d) => (d.pathType === 'trava' ? [52, 211, 153, 240] : [255, 255, 255, 220]),
       stroked: true,
-      lineWidthMinPixels: 1,
-      pickable: false, // точки не перехватывают клики по домам
+      lineWidthMinPixels: 1.4,
+      pickable: true,
+      onClick: (info) => {
+        forwardBuildingClick(info.x, info.y);
+        return true;
+      },
     });
 
-    return [halo, people];
-  }, [busTrips, parkTrips, time]);
+    return [shadows, units];
+  }, [displayAgents, forwardBuildingClick]);
 
   const layers = useMemo(
-    () => [...staticLayers, ...flowLayers],
-    [staticLayers, flowLayers],
+    () => [...staticLayers, ...pedestrianLayers],
+    [staticLayers, pedestrianLayers],
   );
 
-  const peopleCount = busTrips.length + parkTrips.length;
-  const ariaSummary = `3D-модель района: ${scenario.buildings.length} зданий, ${scenario.edges.length} участков дорог, потоки показаны движущимися точками — в пути ${peopleCount}. Подписи объектов включены.`;
+  const pedestrianCount = displayAgents.length;
+  const grassCount = displayAgents.filter((a) => a.pathType === 'trava').length;
+  const pavedCount = pedestrianCount - grassCount;
+  const ariaSummary = `3D-модель района: ${scenario.buildings.length} зданий, ${scenario.edges.length} участков дорог, ${pedestrianCount} независимых пешеходов (по тротуарам: ${pavedCount}, по полям и траве: ${grassCount}). Подписи объектов включены.`;
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-[#161a22] shadow-xl">
       <div className="flex h-8 items-center justify-between border-b border-gray-700 bg-[#11141c] px-3 font-mono text-[11px] text-gray-300 select-none">
         <span className="font-semibold text-blue-400">
-          3D ДВОЙНИК НА DECK.GL: ПОТОКИ ПО ДЕЙКСТРЕ
+          3D ДВОЙНИК НА DECK.GL: АВТОНОМНЫЕ ПЕШЕХОДЫ (ТРОТУАРЫ, ПОЛЯ И ШКОЛЫ)
         </span>
         <span className="text-gray-400">
-          ЛКМ: Вращение | ПКМ: Панорама | Колесо: Зум | В пути: {peopleCount}
+          Пешеходов: {pedestrianCount} (тропинки: {pavedCount}, трава/поля: {grassCount})
         </span>
       </div>
       <div
@@ -909,6 +1391,7 @@ export default function DeckCityView({
       >
         <p className="sr-only">{ariaSummary}</p>
         <DeckGL
+          ref={deckRef}
           views={orbitView}
           viewState={viewState}
           onViewStateChange={({ viewState: vs }) =>
@@ -919,6 +1402,18 @@ export default function DeckCityView({
           effects={[lightingEffect]}
           getTooltip={({ object, layer }) => {
             if (!object || !layer) return null;
+            if (layer.id === 'pedestrian-units') {
+              const p = object as DisplayPedestrian;
+              const typeLabel =
+                p.pathType === 'trava'
+                  ? '🌿 По траве и полям (напрямик)'
+                  : '🚶 По тропинке / тротуару (приоритизировано)';
+              const routeText =
+                p.direction === 1 ? `${p.fromName} → ${p.toName}` : `${p.toName} → ${p.fromName}`;
+              return {
+                text: `Пешеход: ${p.name}\nЦель: ${p.activity}\nМаршрут: ${routeText}\nТип пути: ${typeLabel}\nСкорость: ${(p.speed * 3.6).toFixed(1)} км/ч`,
+              };
+            }
             if (layer.id === 'buildings-3d-layer') {
               const b = object as Building;
               return {
@@ -943,10 +1438,12 @@ export default function DeckCityView({
                     ? 'Велодорожка'
                     : e.type === 'park_path'
                       ? 'Тропа сквера'
-                      : e.type === 'underpass'
-                        ? 'Подземный переход'
-                        : 'Тротуар';
-              return { text: `${kind} · ${edgeLoads[e.id] || 0} чел/час` };
+                        : e.type === 'underpass'
+                          ? 'Подземный переход'
+                          : 'Тротуар';
+              const load = edgeLoads[e.id] || 0;
+              const warn = load > HEAT_WARN ? ' (высокая нагрузка)' : '';
+              return { text: `${kind} · ${load} чел/час${warn}` };
             }
             if (layer.id === 'bus-stops-layer') {
               const s = object as Amenity;
@@ -961,9 +1458,10 @@ export default function DeckCityView({
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-white" />зебра</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-teal-300" />вело</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-green-400" />тропа</span>
-          <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-orange-500" />перегруз</span>
+          <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-orange-500" />нагрузка</span>
           <span><i className="mr-1 inline-block h-2 w-4 rounded-sm bg-sky-400" />путь Дейкстры</span>
-          <span><i className="mr-1 inline-block h-2 w-2 rounded-full bg-blue-500" />люди</span>
+          <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-white bg-blue-500" />по тропинке</span>
+          <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-emerald-400 bg-emerald-500" />по траве и полям</span>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@
 'use client';
 
 import { Building, BuildingTag, BUILDING_TAG_LABEL, GraphEdge, DistrictMetrics, PathResult } from '@/lib/city-engine/types';
+import { ResidentImpactSummary } from '@/lib/city-engine/metrics';
 
 interface DistrictSidebarProps {
   selectedBuilding?: Building;
@@ -9,6 +10,11 @@ interface DistrictSidebarProps {
   activePath?: PathResult | null;
   metrics: DistrictMetrics;
   baseMetrics: DistrictMetrics;
+  impact: ResidentImpactSummary;
+  baseStamp: string;
+  onFixBase: () => void;
+  onRollbackToBase: () => void;
+  onOpenAudit: () => void;
 }
 
 const cardGlassCls =
@@ -26,6 +32,11 @@ export default function DistrictSidebar({
   activePath,
   metrics,
   baseMetrics,
+  impact,
+  baseStamp,
+  onFixBase,
+  onRollbackToBase,
+  onOpenAudit,
 }: DistrictSidebarProps) {
   const busDelta = metrics.weightedAvgBusDistM - baseMetrics.weightedAvgBusDistM;
   const parkDelta = metrics.parkAccessPercent - baseMetrics.parkAccessPercent;
@@ -108,7 +119,7 @@ export default function DistrictSidebar({
       label: 'Бюджет',
       before: `${baseMetrics.budgetSpentRub.toLocaleString('ru-RU')} ₽`,
       after: `${metrics.budgetSpentRub.toLocaleString('ru-RU')} ₽`,
-      delta: budgetDelta === 0 ? '0' : `+${budgetDelta.toLocaleString('ru-RU')} ₽`,
+      delta: budgetDelta === 0 ? '0' : `${budgetDelta > 0 ? '+' : '−'}${Math.abs(budgetDelta).toLocaleString('ru-RU')} ₽`,
       good: true,
     },
   ];
@@ -321,15 +332,134 @@ export default function DistrictSidebar({
         )}
       </div>
 
-      {/* Сравнение с базой: было / стало / дельта. База = загрузка пресета или проекта.
-          Детерминированный пересчёт: возврат схемы даёт Δ = 0. */}
+      {/* Сравнение с базой: было / стало / дельта. База = загрузка проекта
+          или ручная фиксация «📌 Зафиксировать ДО». Детерминированный пересчёт:
+          возврат схемы даёт Δ = 0, откат — кнопкой ниже. */}
       <div className={cardGlassCls} aria-live="polite">
         <div className="flex items-center justify-between border-b border-white/50 pb-2.5 dark:border-white/15">
           <h3 className="text-xs font-black uppercase tracking-tight text-gray-900 dark:text-gray-100">
             Было / Стало
           </h3>
-          <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">БАЗА — ЗАГРУЗКА</span>
+          <span className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{baseStamp}</span>
         </div>
+
+        {/* Баланс выгодоприобретателей: кому путь до остановки стал короче */}
+        <div className="mt-2.5">
+          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-tight text-gray-700 dark:text-gray-300">
+            <span>Баланс жителей</span>
+            <span className="text-[10px] font-normal normal-case text-gray-400">путь до остановки</span>
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-1.5 text-center">
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-1.5">
+              <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">В плюсе</div>
+              <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                {impact.improvedResidents} чел.
+              </div>
+            </div>
+            <div className="rounded-xl border border-gray-500/20 bg-gray-500/10 p-1.5">
+              <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400">Без изм.</div>
+              <div className="text-sm font-black text-gray-700 dark:text-gray-300">
+                {impact.unchangedResidents} чел.
+              </div>
+            </div>
+            <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-1.5">
+              <div className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">В минусе</div>
+              <div className="text-sm font-black text-rose-600 dark:text-rose-400">
+                {impact.worsenedResidents} чел.
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 flex h-2 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+            <div
+              style={{ width: `${(impact.improvedResidents / (metrics.totalResidents || 1)) * 100}%` }}
+              className="bg-emerald-500 transition-all duration-300"
+              title="Выиграли"
+            />
+            <div
+              style={{ width: `${(impact.unchangedResidents / (metrics.totalResidents || 1)) * 100}%` }}
+              className="bg-gray-400 transition-all duration-300"
+              title="Без изменений"
+            />
+            <div
+              style={{ width: `${(impact.worsenedResidents / (metrics.totalResidents || 1)) * 100}%` }}
+              className="bg-rose-500 transition-all duration-300"
+              title="Проиграли"
+            />
+          </div>
+          <p className="mt-1.5 text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+            {impact.maxSavedMeters > 0 && (
+              <>Макс. выигрыш: −{impact.maxSavedMeters} м. </>
+            )}
+            {impact.maxLossMeters > 0 && (
+              <>Макс. проигрыш: +{impact.maxLossMeters} м. </>
+            )}
+            {impact.maxSavedMeters === 0 && impact.maxLossMeters === 0 && (
+              <>Ни один дом не изменил путь больше чем на 5 м. </>
+            )}
+            {impact.addedResidents > 0 && (
+              <>Новострой: {impact.addedResidents} чел. (вне сравнения). </>
+            )}
+            {impact.removedResidents > 0 && (
+              <>Снесено: {impact.removedResidents} чел. (вне сравнения).</>
+            )}
+          </p>
+          {(impact.worsenedResidents > 0 || impact.improvedResidents > 0) && (
+            <details className="mt-1.5 rounded-xl border border-white/60 bg-white/30 px-2.5 py-1.5 dark:border-white/15 dark:bg-gray-900/30">
+              <summary className="cursor-pointer text-[10px] font-bold uppercase tracking-tight text-gray-600 dark:text-gray-300">
+                По домам
+              </summary>
+              <div className="mt-1 space-y-0.5 text-[11px]">
+                {impact.buildings
+                  .filter((b) => b.deltaM !== null && b.deltaM > 5)
+                  .sort((a, b) => (b.deltaM ?? 0) - (a.deltaM ?? 0))
+                  .slice(0, 5)
+                  .map((b) => (
+                    <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
+                      <span className="truncate">{b.name} · {b.residents} чел.</span>
+                      <b className="shrink-0 text-rose-600 dark:text-rose-400">+{b.deltaM} м</b>
+                    </div>
+                  ))}
+                {impact.buildings
+                  .filter((b) => b.deltaM !== null && b.deltaM < -5)
+                  .sort((a, b) => (a.deltaM ?? 0) - (b.deltaM ?? 0))
+                  .slice(0, 5)
+                  .map((b) => (
+                    <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
+                      <span className="truncate">{b.name} · {b.residents} чел.</span>
+                      <b className="shrink-0 text-emerald-600 dark:text-emerald-400">{b.deltaM} м</b>
+                    </div>
+                  ))}
+              </div>
+            </details>
+          )}
+        </div>
+
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            onClick={onFixBase}
+            title="Зафиксировать текущее состояние как базовое «ДО»"
+            className="flex-1 whitespace-nowrap rounded-full border border-white/60 bg-white/50 px-3 py-1.5 text-[11px] font-bold text-gray-700 backdrop-blur-xl transition-all duration-200 hover:scale-[1.03] active:scale-[0.98] dark:border-white/15 dark:bg-white/10 dark:text-gray-200"
+          >
+            📌 Зафиксировать ДО
+          </button>
+          <button
+            type="button"
+            onClick={onRollbackToBase}
+            title="Вернуть проект к зафиксированному «ДО»"
+            className="flex-1 whitespace-nowrap rounded-full border border-white/60 bg-white/50 px-3 py-1.5 text-[11px] font-bold text-gray-700 backdrop-blur-xl transition-all duration-200 hover:scale-[1.03] active:scale-[0.98] dark:border-white/15 dark:bg-white/10 dark:text-gray-200"
+          >
+            ↩ Откатить к ДО
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenAudit}
+          title="Открыть дашборд глубокого аудита: динамика решений, баланс среды, выводы алгоритма"
+          className="mt-2 w-full rounded-full border border-blue-400/60 bg-blue-600/90 py-1.5 text-xs font-bold text-white shadow-sm transition-all duration-200 ease-out hover:scale-[1.02] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none"
+        >
+          📊 Развернуть полный отчёт аудита
+        </button>
         <table className="mt-2 w-full border-collapse text-[11px]">
           <thead>
             <tr className="text-[10px] uppercase text-gray-500 dark:text-gray-400">

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL } from '@/lib/city-engine/types';
+import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL, PathResult } from '@/lib/city-engine/types';
+import { CITY_DEFAULTS } from '@/lib/city-engine/metrics';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
 import DistrictContextMenu from './DistrictContextMenu';
 import BuildingContextMenu from './BuildingContextMenu';
@@ -23,12 +24,22 @@ export type ToolMode =
 
 interface DistrictMapProps {
   scenario: DistrictScenario;
+  baseScenario: DistrictScenario;
+  // Режим сравнения «До / После»: current — проект (редактирование),
+  // base — зафиксированное ДО (только чтение), diff — наложение обоих.
+  diffView: 'current' | 'base' | 'diff';
+  baseActivePathNodeIds: string[];
+  // Дельта пути до остановки по домам (м): минус — стало короче.
+  buildingDeltas: Record<string, number>;
   selectedBuildingId: string | null;
   selectedEdgeId: string | null;
   onSelectBuilding: (buildingId: string | null) => void;
   onSelectEdge: (edgeId: string | null) => void;
   activePathNodeIds: string[];
   edgeLoads: Record<string, number>;
+  // Пути до остановки для показанного вида (current — metrics, base — baseMetrics):
+  // hover по дому с тегом показывает его реальный путь из движка.
+  busPaths: Record<string, PathResult | null>;
   toolMode: ToolMode;
   onAddRoad: (x1: number, y1: number, x2: number, y2: number, type?: 'road' | 'sidewalk' | 'crossing') => void;
   onAddPolyBuilding: (points: { x: number; y: number }[]) => void;
@@ -64,13 +75,18 @@ const ROAD_CASING = '#0d1219';
 const RING_ISLAND = '#1c2433';
 
 export default function DistrictMap({
-  scenario,
+  scenario: scenarioProp,
+  baseScenario,
+  diffView,
+  baseActivePathNodeIds,
+  buildingDeltas,
   selectedBuildingId,
   selectedEdgeId,
   onSelectBuilding,
   onSelectEdge,
   activePathNodeIds,
   edgeLoads,
+  busPaths,
   toolMode,
   onAddRoad,
   onAddPolyBuilding,
@@ -89,9 +105,28 @@ export default function DistrictMap({
   onMoveBuilding,
   onMoveAmenity,
 }: DistrictMapProps) {
+  // В режимах «Было»/«Дифф» карта только читается: показана база либо
+  // наложение, все мутации (drag, инструменты, ПКМ-меню) заблокированы.
+  const readOnly = diffView !== 'current';
+  const scenario = diffView === 'base' ? baseScenario : scenarioProp;
+  const shownPathNodeIds = diffView === 'base' ? baseActivePathNodeIds : activePathNodeIds;
   const [roadStart, setRoadStart] = useState<{ x: number; y: number } | null>(null);
   const [polygonDraft, setPolygonDraft] = useState<{ x: number; y: number }[]>([]);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  // Hover-подсветка зоны охвата: наведение на остановку/сквер/школу/дом с тегом
+  // показывает реальный радиус пешеходной доступности из CITY_DEFAULTS
+  // (500 м для остановок/тегов, настраиваемый для скверов). Без radiusM —
+  // только инфоплашка без круга (жилые дома, ТЦ).
+  const [hoveredEntity, setHoveredEntity] = useState<{
+    id: string;
+    name: string;
+    kind: 'bus_stop' | 'park' | 'school' | 'police' | 'hospital' | 'shop' | 'building';
+    x: number;
+    y: number;
+    radiusM?: number;
+    color: string;
+    details?: string;
+  } | null>(null);
   // ПКМ-меню: у дома и дороги разный набор. wx/wy — мировая точка клика
   // (нужна остановке для разреза ребра строго в месте клика).
   const [contextMenu, setContextMenu] = useState<{
@@ -241,8 +276,9 @@ export default function DistrictMap({
     origX: number,
     origY: number,
   ) => {
-    if (toolMode !== 'select' || e.button !== 0) return;
+    if (readOnly || toolMode !== 'select' || e.button !== 0) return;
     e.stopPropagation();
+    setHoveredEntity(null);
     (e.target as Element).releasePointerCapture?.(e.pointerId);
     const w = toWorldRaw(e.clientX, e.clientY);
     setDrag({ kind, id, origX, origY, startCX: w.x, startCY: w.y, curX: w.x, curY: w.y, moved: false });
@@ -260,7 +296,7 @@ export default function DistrictMap({
     lpStart.current = null;
   };
   const beginLongPress = (e: ReactPointerEvent, open: () => void) => {
-    if (e.pointerType === 'mouse') return;
+    if (readOnly || e.pointerType === 'mouse') return;
     cancelLongPress();
     lpStart.current = { cx: e.clientX, cy: e.clientY };
     longPressTimer.current = window.setTimeout(() => {
@@ -362,6 +398,12 @@ export default function DistrictMap({
     };
   }, []);
 
+  // Переход в «Было»/«Дифф» закрывает ПКМ-меню: его действия мутируют текущий
+  // сценарий, а карта в readOnly заявляет «ТОЛЬКО ЧТЕНИЕ».
+  useEffect(() => {
+    if (readOnly) setContextMenu(null);
+  }, [readOnly]);
+
   // Клик после drag/панорамы — глушим (объекты останавливают всплытие,
   // поэтому проверяют флаг сами).
   const consumeSuppressedClick = (): boolean => {
@@ -378,6 +420,7 @@ export default function DistrictMap({
       return;
     }
     if (contextMenu) setContextMenu(null);
+    if (readOnly) return;
     const coords = getSvgCoordinates(e);
 
     if (toolMode === 'road' || toolMode === 'sidewalk') {
@@ -433,12 +476,14 @@ export default function DistrictMap({
   };
 
   const handleEdgeContextMenu = (e: ReactMouseEvent, edgeId: string) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     openEdgeMenu(e.clientX, e.clientY, edgeId);
   };
 
   const handleBuildingContextMenu = (e: ReactMouseEvent, buildingId: string) => {
+    if (readOnly) return;
     e.preventDefault();
     e.stopPropagation();
     openBuildingMenu(e.clientX, e.clientY, buildingId);
@@ -455,6 +500,12 @@ export default function DistrictMap({
       return;
     }
     if (contextMenu) setContextMenu(null);
+    // Только чтение: выбор участка разрешён, инструменты — нет.
+    if (readOnly) {
+      onSelectEdge(edge.id);
+      onSelectBuilding(null);
+      return;
+    }
     const isCarRoad = edge.type === 'road';
     if (toolMode === 'block_spot') {
       e.stopPropagation();
@@ -476,12 +527,72 @@ export default function DistrictMap({
   };
 
   // Плавная «народная тропа»: путь Дейкстры сплайном Безье вместо ломаной.
+  // В режиме «Было» — путь из базового ДО, в «Дифф» текущий путь рисуется
+  // поверх, а базовый — серым пунктиром в ghost-слое ниже.
   const activePathD = pointsToSmoothSvgPath(
-    activePathNodeIds
+    shownPathNodeIds
       .map((id) => nodeMap.get(id))
       .filter((n): n is GraphNode => !!n)
       .map((n) => ({ x: n.x, y: n.y })),
   );
+  const baseNodeMap = new Map<string, GraphNode>(baseScenario.nodes.map((n) => [n.id, n]));
+  const basePathD = pointsToSmoothSvgPath(
+    baseActivePathNodeIds
+      .map((id) => baseNodeMap.get(id))
+      .filter((n): n is GraphNode => !!n)
+      .map((n) => ({ x: n.x, y: n.y })),
+  );
+  // Ghost-слой «Дифф»: чего нет в проекте относительно ДО.
+  const baseEdgeIds = new Set(baseScenario.edges.map((e) => e.id));
+  const currentEdgeIds = new Set(scenarioProp.edges.map((e) => e.id));
+  const removedEdges = diffView === 'diff' ? baseScenario.edges.filter((e) => !currentEdgeIds.has(e.id)) : [];
+  const addedEdges = diffView === 'diff' ? scenarioProp.edges.filter((e) => !baseEdgeIds.has(e.id)) : [];
+  const baseBuildingIds = new Set(baseScenario.buildings.map((b) => b.id));
+  const currentBuildingIds = new Set(scenarioProp.buildings.map((b) => b.id));
+  const removedBuildings = diffView === 'diff' ? baseScenario.buildings.filter((b) => !currentBuildingIds.has(b.id)) : [];
+  // Обводка дома в «Дифф»: зелёный — путь короче, красный — длиннее, ±5 м — шум.
+  const deltaStroke = (buildingId: string, fallback: string): string => {
+    if (diffView !== 'diff') return fallback;
+    if (!baseBuildingIds.has(buildingId)) return '#10b981';
+    const d = buildingDeltas[buildingId];
+    if (d === undefined) return fallback;
+    if (d < -5) return '#10b981';
+    if (d > 5) return '#f43f5e';
+    return fallback;
+  };
+
+  // Hover-зона: конструкторы полезной нагрузки по типам объектов.
+  // Радиусы — из CITY_DEFAULTS (единый конфиг, не магические числа).
+  const TAG_HOVER: Record<BuildingTag, { color: string; radiusM: number }> = {
+    school: { color: '#d97706', radiusM: CITY_DEFAULTS.serviceDefaultRadiusM },
+    police: { color: '#2563eb', radiusM: CITY_DEFAULTS.serviceDefaultRadiusM },
+    hospital: { color: '#475569', radiusM: CITY_DEFAULTS.serviceDefaultRadiusM },
+    shop: { color: '#64748b', radiusM: CITY_DEFAULTS.serviceDefaultRadiusM },
+  };
+  const hoveredId = hoveredEntity?.id;
+  useEffect(() => {
+    if (!hoveredId) return;
+    const exists =
+      scenario.buildings.some((b) => b.id === hoveredId) ||
+      scenario.amenities.some((a) => a.id === hoveredId);
+    if (!exists) setHoveredEntity(null);
+  }, [scenario.buildings, scenario.amenities, hoveredId]);
+
+  const hoverBuilding = (b: Building, x: number, y: number) => {
+    if (!b.tag) {
+      return {
+        id: b.id, name: `Дом «${b.name}»`, kind: 'building' as const,
+        x, y, color: '#64748b', details: `${b.residents} чел.`,
+      };
+    }
+    const meta = TAG_HOVER[b.tag];
+    const path = busPaths[b.id];
+    return {
+      id: b.id, name: `${BUILDING_TAG_LABEL[b.tag]} • корпус «${b.name}»`, kind: b.tag,
+      x, y, radiusM: meta.radiusM, color: meta.color,
+      details: `${b.residents} чел. • путь до остановки: ${path ? `${path.distanceM} м` : 'нет пути'} • зона ${meta.radiusM} м`,
+    };
+  };
 
   const roundaboutCenters = scenario.nodes.filter((n) => n.type === 'roundabout');
   const menuEdge =
@@ -514,6 +625,11 @@ export default function DistrictMap({
               toolMode === 'block_spot' ? 'ЛОКАЛЬНЫЙ РЕМОНТ' : 'СНОС'
             }
           </span>
+          {readOnly && (
+            <span className="rounded-full bg-amber-500/20 px-2 py-0.5 font-semibold text-amber-300">
+              {diffView === 'base' ? 'ПРОСМОТР «БЫЛО» — ТОЛЬКО ЧТЕНИЕ' : 'ДИФФ — ТОЛЬКО ЧТЕНИЕ'}
+            </span>
+          )}
         </div>
         <div>
           X: <span className="text-emerald-400">{mousePos?.x ?? 0}м</span> | Y:{' '}
@@ -525,13 +641,14 @@ export default function DistrictMap({
         ref={svgRef}
         viewBox={viewBoxStr}
         className="h-auto w-full select-none"
-        style={{ minHeight: '520px', cursor: toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
+        style={{ minHeight: '520px', cursor: readOnly ? 'default' : toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
         onClick={handleSvgClick}
         onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
         onPointerDown={handleSvgPointerDown}
         onPointerMove={handleSvgPointerMove}
         onPointerUp={handleSvgPointerUp}
         onPointerLeave={() => {
+          setHoveredEntity(null);
           if (!drag && !panStart.current) mousePos && setMousePos(null);
         }}
         role="img"
@@ -559,11 +676,23 @@ export default function DistrictMap({
               const isDragged = drag?.kind === 'park' && drag.id === park.id;
               const shifted = isDragged ? park.polygon.map((p) => ({ x: p.x + dragDX, y: p.y + dragDY })) : park.polygon;
               const pts = shifted.map((p) => `${p.x},${p.y}`).join(' ');
+              const centroid = shifted.reduce((acc, p) => ({ x: acc.x + p.x / shifted.length, y: acc.y + p.y / shifted.length }), { x: 0, y: 0 });
+              const parkRadius = park.coverageRadiusM || CITY_DEFAULTS.parkDefaultRadiusM;
               return (
                 <g
                   key={park.id}
                   onPointerDown={(e) => beginObjectDrag(e, 'park', park.id, park.polygon![0].x, park.polygon![0].y)}
-                  onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete') onDeleteAmenity(park.id); }}
+                  onMouseEnter={() => {
+                    if (!drag) {
+                      setHoveredEntity({
+                        id: park.id, name: `Сквер «${park.name}»`, kind: 'park',
+                        x: centroid.x, y: centroid.y, radiusM: parkRadius, color: '#10b981',
+                        details: `Зона ${parkRadius} м • охват считается Дейкстрой от входа в сквер`,
+                      });
+                    }
+                  }}
+                  onMouseLeave={() => setHoveredEntity(null)}
+                  onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete' && !readOnly) onDeleteAmenity(park.id); }}
                 >
                   <polygon points={pts} fill="#143828" stroke="#2d6a4f" strokeWidth="2" strokeDasharray="4 2" />
                   <text x={shifted[0].x} y={shifted[0].y + 14} fill="#a7f3d0" fontSize="9" fontFamily="monospace">
@@ -576,11 +705,22 @@ export default function DistrictMap({
             const isDraggedPt = drag?.kind === 'amenity' && drag.id === park.id;
             const ccx = node.x + (isDraggedPt ? dragDX : 0);
             const ccy = node.y + (isDraggedPt ? dragDY : 0);
+            const parkPtRadius = park.coverageRadiusM || CITY_DEFAULTS.parkDefaultRadiusM;
             return (
               <g
                 key={park.id}
                 onPointerDown={(e) => beginObjectDrag(e, 'amenity', park.id, node.x, node.y)}
-                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete') onDeleteAmenity(park.id); }}
+                onMouseEnter={() => {
+                  if (!drag) {
+                    setHoveredEntity({
+                      id: park.id, name: `Сквер «${park.name}»`, kind: 'park',
+                      x: ccx, y: ccy, radiusM: parkPtRadius, color: '#10b981',
+                      details: `Зона ${parkPtRadius} м • охват считается Дейкстрой от входа в сквер`,
+                    });
+                  }
+                }}
+                onMouseLeave={() => setHoveredEntity(null)}
+                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete' && !readOnly) onDeleteAmenity(park.id); }}
               >
                 <circle cx={ccx} cy={ccy} r="48" fill="#143828" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
                 <text x={ccx} y={ccy + 4} textAnchor="middle" fill="#a7f3d0" fontSize="9" fontFamily="monospace" fontWeight="700">
@@ -811,6 +951,97 @@ export default function DistrictMap({
           );
         })}
 
+        {/* Ghost-слой «Дифф / Наложение»: янтарный пунктир — что было в ДО
+            и исчезло, изумрудный — новое, серый пунктир — старый путь дома. */}
+        {diffView === 'diff' && (
+          <g id="ghost-baseline-layer">
+            {removedEdges.map((oldEdge) => {
+              const u = baseNodeMap.get(oldEdge.from);
+              const v = baseNodeMap.get(oldEdge.to);
+              if (!u || !v) return null;
+              return (
+                <line
+                  key={`ghost-edge-${oldEdge.id}`}
+                  x1={u.x}
+                  y1={u.y}
+                  x2={v.x}
+                  y2={v.y}
+                  stroke="#f59e0b"
+                  strokeWidth={oldEdge.type === 'crossing' || oldEdge.type === 'underpass' ? 8 : 12}
+                  strokeDasharray="6 6"
+                  opacity={0.55}
+                >
+                  <title>Было в «ДО» — удалено или перекрыто</title>
+                </line>
+              );
+            })}
+            {addedEdges.map((e) => {
+              const u = nodeMap.get(e.from);
+              const v = nodeMap.get(e.to);
+              if (!u || !v) return null;
+              return (
+                <line
+                  key={`new-edge-${e.id}`}
+                  x1={u.x}
+                  y1={u.y}
+                  x2={v.x}
+                  y2={v.y}
+                  stroke="#10b981"
+                  strokeWidth={4}
+                  strokeDasharray="2 5"
+                  strokeLinecap="round"
+                  opacity={0.95}
+                >
+                  <title>Новое в проекте (не было в «ДО»)</title>
+                </line>
+              );
+            })}
+            {removedBuildings.map((b) =>
+              b.polygon && b.polygon.length >= 3 ? (
+                <polygon
+                  key={`ghost-b-${b.id}`}
+                  points={b.polygon.map((p) => `${p.x},${p.y}`).join(' ')}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={2.5}
+                  strokeDasharray="7 5"
+                  opacity={0.6}
+                >
+                  <title>{`Было в «ДО» — снесено: ${b.name}`}</title>
+                </polygon>
+              ) : (
+                <rect
+                  key={`ghost-b-${b.id}`}
+                  x={b.x}
+                  y={b.y}
+                  width={b.width}
+                  height={b.height}
+                  fill="none"
+                  stroke="#f59e0b"
+                  strokeWidth={2.5}
+                  strokeDasharray="7 5"
+                  opacity={0.6}
+                >
+                  <title>{`Было в «ДО» — снесено: ${b.name}`}</title>
+                </rect>
+              ),
+            )}
+            {basePathD && (
+              <path
+                d={basePathD}
+                fill="none"
+                stroke="#94a3b8"
+                strokeWidth={4}
+                strokeDasharray="5 5"
+                strokeLinecap="round"
+                opacity={0.8}
+              >
+                <title>Старый путь дома в «ДО»</title>
+              </path>
+            )}
+          </g>
+        )}
+
         {/* Активный путь Дейкстры — единый плавный сплайн поверх полотен */}
         {activePathD && (
           <path
@@ -867,6 +1098,54 @@ export default function DistrictMap({
           <line x1={roadStart.x} y1={roadStart.y} x2={mousePos.x} y2={mousePos.y} stroke="#60a5fa" strokeWidth={14} strokeDasharray="6 4" />
         )}
 
+        {/* Интерактивная зона охвата при наведении: круг радиуса пешеходной
+            доступности Дейкстры + бейдж. Рендерится под домами, поверх дорог. */}
+        {hoveredEntity?.radiusM && (
+          <g id="hover-coverage-layer" className="pointer-events-none">
+            <circle
+              cx={hoveredEntity.x}
+              cy={hoveredEntity.y}
+              r={hoveredEntity.radiusM}
+              fill={hoveredEntity.color}
+              fillOpacity={0.12}
+              stroke={hoveredEntity.color}
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              className="motion-safe:animate-pulse"
+            />
+            <circle
+              cx={hoveredEntity.x}
+              cy={hoveredEntity.y}
+              r={8}
+              fill={hoveredEntity.color}
+              stroke="#ffffff"
+              strokeWidth={2}
+            />
+            <rect
+              x={hoveredEntity.x - 60}
+              y={hoveredEntity.y + 14}
+              width={120}
+              height={18}
+              rx={9}
+              fill="#0f172a"
+              fillOpacity={0.85}
+              stroke={hoveredEntity.color}
+              strokeWidth={1}
+            />
+            <text
+              x={hoveredEntity.x}
+              y={hoveredEntity.y + 26}
+              textAnchor="middle"
+              fill="#ffffff"
+              fontSize="9"
+              fontFamily="monospace"
+              fontWeight="700"
+            >
+              Зона охвата: {hoveredEntity.radiusM} м
+            </text>
+          </g>
+        )}
+
         {/* Дома: в select тянутся мышью (превью со сдвигом), иначе клик — выбор/снов */}
         {scenario.buildings.map((b: Building) => {
           const isSelected = selectedBuildingId === b.id;
@@ -874,14 +1153,17 @@ export default function DistrictMap({
           if (b.polygon && b.polygon.length >= 3) {
             const shifted = isDragged ? b.polygon.map((p) => ({ x: p.x + dragDX, y: p.y + dragDY })) : b.polygon;
             const pts = shifted.map((p) => `${p.x},${p.y}`).join(' ');
+            const centroid = shifted.reduce((acc, p) => ({ x: acc.x + p.x / shifted.length, y: acc.y + p.y / shifted.length }), { x: 0, y: 0 });
             return (
               <g
                 key={b.id}
                 onPointerDown={(e) => { beginObjectDrag(e, 'building', b.id, b.polygon![0].x, b.polygon![0].y); beginLongPress(e, () => openBuildingMenu(e.clientX, e.clientY, b.id)); }}
                 onContextMenu={(e) => handleBuildingContextMenu(e, b.id)}
-                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
+                onMouseEnter={() => { if (!drag) setHoveredEntity(hoverBuilding(b, centroid.x, centroid.y)); }}
+                onMouseLeave={() => setHoveredEntity(null)}
+                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' && !readOnly ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
               >
-                <polygon points={pts} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth="2" />
+                <polygon points={pts} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={deltaStroke(b.id, isSelected ? '#60a5fa' : '#475569')} strokeWidth="2" />
                 <text x={shifted[0].x + 10} y={shifted[0].y + 16} fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                   {b.name} ({b.residents} чел)
                 </text>
@@ -907,9 +1189,11 @@ export default function DistrictMap({
               transform={b.rotationDeg ? `rotate(${b.rotationDeg} ${cx} ${cy})` : undefined}
               onPointerDown={(e) => { beginObjectDrag(e, 'building', b.id, b.x, b.y); beginLongPress(e, () => openBuildingMenu(e.clientX, e.clientY, b.id)); }}
               onContextMenu={(e) => handleBuildingContextMenu(e, b.id)}
-              onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
+              onMouseEnter={() => { if (!drag) setHoveredEntity(hoverBuilding(b, cx, cy)); }}
+              onMouseLeave={() => setHoveredEntity(null)}
+              onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' && !readOnly ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
             >
-              <rect x={bx} y={by} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
+              <rect x={bx} y={by} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={deltaStroke(b.id, isSelected ? '#60a5fa' : '#475569')} strokeWidth={isSelected ? 2.5 : 1} />
               <text x={cx} y={cy + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                 {b.name}
               </text>
@@ -939,10 +1223,20 @@ export default function DistrictMap({
             <g
               key={bus.id}
               onPointerDown={(e) => beginObjectDrag(e, 'amenity', bus.id, n.x + 18, n.y - 18)}
+              onMouseEnter={() => {
+                if (!drag) {
+                  setHoveredEntity({
+                    id: bus.id, name: `Остановка «${bus.name}»`, kind: 'bus_stop',
+                    x: mx, y: my, radiusM: CITY_DEFAULTS.busDefaultRadiusM, color: '#3b82f6',
+                    details: `Зона ${CITY_DEFAULTS.busDefaultRadiusM} м • охват считается Дейкстрой по тротуарам`,
+                  });
+                }
+              }}
+              onMouseLeave={() => setHoveredEntity(null)}
               onClick={(e) => {
                 e.stopPropagation();
                 if (consumeSuppressedClick()) return;
-                if (toolMode === 'delete') onDeleteAmenity(bus.id);
+                if (toolMode === 'delete' && !readOnly) onDeleteAmenity(bus.id);
               }}
             >
               <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#93c5fd" strokeWidth={1.5} />
@@ -966,10 +1260,20 @@ export default function DistrictMap({
             <g
               key={school.id}
               onPointerDown={(e) => beginObjectDrag(e, 'amenity', school.id, n.x + 20, n.y - 20)}
+              onMouseEnter={() => {
+                if (!drag) {
+                  setHoveredEntity({
+                    id: school.id, name: `Школа «${school.name}»`, kind: 'school',
+                    x: mx, y: my, radiusM: CITY_DEFAULTS.schoolDefaultRadiusM, color: '#d97706',
+                    details: `Зона ${CITY_DEFAULTS.schoolDefaultRadiusM} м • охват считается Дейкстрой от входа`,
+                  });
+                }
+              }}
+              onMouseLeave={() => setHoveredEntity(null)}
               onClick={(e) => {
                 e.stopPropagation();
                 if (consumeSuppressedClick()) return;
-                if (toolMode === 'delete') onDeleteAmenity(school.id);
+                if (toolMode === 'delete' && !readOnly) onDeleteAmenity(school.id);
               }}
             >
               <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#fcd34d" strokeWidth={1.5} />
@@ -993,10 +1297,20 @@ export default function DistrictMap({
             <g
               key={mall.id}
               onPointerDown={(e) => beginObjectDrag(e, 'amenity', mall.id, n.x + 18, n.y + 18)}
+              onMouseEnter={() => {
+                if (!drag) {
+                  setHoveredEntity({
+                    id: mall.id, name: `ТЦ «${mall.name}»`, kind: 'building',
+                    x: mx, y: my, color: '#64748b',
+                    details: 'Коммерческое притяжение',
+                  });
+                }
+              }}
+              onMouseLeave={() => setHoveredEntity(null)}
               onClick={(e) => {
                 e.stopPropagation();
                 if (consumeSuppressedClick()) return;
-                if (toolMode === 'delete') onDeleteAmenity(mall.id);
+                if (toolMode === 'delete' && !readOnly) onDeleteAmenity(mall.id);
               }}
             >
               <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#cbd5e1" strokeWidth={1.5} />
@@ -1049,7 +1363,7 @@ export default function DistrictMap({
                   beginObjectDrag(e, 'node', node.id, node.x, node.y);
                 }}
                 onClick={(e) => {
-                  if (toolMode !== 'select') return;
+                  if (readOnly || toolMode !== 'select') return;
                   e.stopPropagation();
                   if (consumeSuppressedClick()) return;
                   onMakeRoundabout(node.id);
@@ -1061,6 +1375,45 @@ export default function DistrictMap({
           );
         })}
       </svg>
+
+      {/* Hover-инфоплашка: параметры точки притяжения под курсором */}
+      {hoveredEntity && (
+        <div className="pointer-events-none absolute right-3 top-10 z-20 max-w-[240px] rounded-2xl border border-white/60 bg-white/80 px-3.5 py-2 text-xs font-semibold text-gray-800 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_12px_24px_-6px_rgba(20,26,38,0.25)] backdrop-blur-xl dark:border-white/15 dark:bg-gray-900/85 dark:text-gray-100">
+          <div className="flex items-center gap-1.5 font-bold text-blue-600 dark:text-blue-400">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: hoveredEntity.color }} />
+            <span className="truncate">{hoveredEntity.name}</span>
+          </div>
+          {hoveredEntity.details && (
+            <div className="mt-0.5 text-[11px] font-normal leading-snug text-gray-600 dark:text-gray-300">
+              {hoveredEntity.details}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Легенда наложения «Дифф»: читается жюри без объяснений */}
+      {diffView === 'diff' && (
+        <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap gap-x-3 gap-y-1 rounded-2xl border border-white/20 bg-[#0d1219]/85 px-3 py-2 font-mono text-[10px] text-gray-200 backdrop-blur-xl">
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-6 border-t-2 border-dashed border-amber-500" /> было в «ДО»
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-6 border-t-2 border-dashed border-emerald-500" /> новое
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-6 border-t-2 border-dashed border-slate-400" /> старый путь
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-0 w-6 border-t-2 border-blue-500" /> новый путь
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm border-2 border-rose-500" /> дому хуже
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm border-2 border-emerald-500" /> дому лучше
+          </span>
+        </div>
+      )}
 
       {contextMenu?.kind === 'edge' && menuEdge && menuEdgeNodes && (
         <DistrictContextMenu

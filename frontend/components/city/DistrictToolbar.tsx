@@ -21,6 +21,11 @@ interface DistrictToolbarProps {
   onToggleSimPlaying: () => void;
   simSpeed: 1 | 2 | 5;
   onSimSpeedChange: (speed: 1 | 2 | 5) => void;
+  diffView: 'current' | 'base' | 'diff';
+  onDiffViewChange: (mode: 'current' | 'base' | 'diff') => void;
+  onFixBase: () => void;
+  onRollbackToBase: () => void;
+  onOpenAudit: () => void;
 }
 
 const glassPanelCls =
@@ -45,6 +50,11 @@ export default function DistrictToolbar({
   onToggleSimPlaying,
   simSpeed,
   onSimSpeedChange,
+  diffView,
+  onDiffViewChange,
+  onFixBase,
+  onRollbackToBase,
+  onOpenAudit,
 }: DistrictToolbarProps) {
   return (
     <div className="mb-3 space-y-2">
@@ -174,7 +184,7 @@ export default function DistrictToolbar({
               ))}
             </div>
             <span className="hidden text-xs font-medium text-emerald-600 sm:inline dark:text-emerald-400">
-              • Пешеходные потоки Дейкстры активны
+              • Пешеходные потоки: тротуары, тропинки, трава и школы
             </span>
           </div>
         )}
@@ -196,6 +206,62 @@ export default function DistrictToolbar({
             3D
           </button>
         </div>
+      </div>
+
+      {/* Сравнение «До / После»: фиксация базы и режимы просмотра для жюри */}
+      <div className={`${glassPanelCls} flex flex-wrap items-center gap-2`}>
+        <span className="shrink-0 text-xs font-semibold uppercase text-gray-500 dark:text-gray-300">
+          До / После:
+        </span>
+        <div className="flex shrink-0 items-center gap-1 rounded-full border border-white/60 bg-white/40 p-0.5 backdrop-blur-xl dark:border-white/20 dark:bg-white/10">
+          {(
+            [
+              ['current', 'Сейчас'],
+              ['base', 'Было'],
+              ['diff', 'Дифф'],
+            ] as const
+          ).map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => onDiffViewChange(mode)}
+              title={
+                mode === 'current'
+                  ? 'Текущий проект (редактирование)'
+                  : mode === 'base'
+                    ? 'Зафиксированное «ДО» (только чтение)'
+                    : 'Наложение: проект + призрак «ДО»'
+              }
+              className={diffView === mode ? cadBtnActive : cadBtn}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onFixBase}
+          title="Зафиксировать текущее состояние как базовое «ДО» — дельты будут считаться от него"
+          className={cadBtn}
+        >
+          📌 Зафиксировать ДО
+        </button>
+        <button
+          type="button"
+          onClick={onRollbackToBase}
+          title="Вернуть проект к зафиксированному «ДО» — все дельты обнулятся"
+          className={cadBtn}
+        >
+          ↩ Откатить к ДО
+        </button>
+        <button
+          type="button"
+          onClick={onOpenAudit}
+          title="Открыть дашборд глубокого аудита: динамика решений, баланс среды, выводы алгоритма"
+          className={cadBtnActive}
+        >
+          📊 Аналитика
+        </button>
       </div>
     </div>
   );

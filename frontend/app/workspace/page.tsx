@@ -10,10 +10,12 @@ import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
 import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
+import AuditDashboardModal, { HistorySnapshot } from '@/components/city/AuditDashboardModal';
 import { EMPTY_DISTRICT } from '@/lib/city-engine/presets';
-import { calculateMetrics } from '@/lib/city-engine/metrics';
+import { calculateMetrics, computeResidentImpact } from '@/lib/city-engine/metrics';
 import { computePolygonAreaM2, findClosestNodeId, splitEdgeAt } from '@/lib/city-engine/geometry';
 import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
+import { uniqueStamp } from '@/lib/city-engine/ids';
 import { DistrictScenario, Building, BuildingTag, BUILDING_TAG_LABEL, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
 import { listProjects, createProject, updateProject, getProject, ProjectSummary } from '@/lib/projectApi';
 
@@ -34,6 +36,11 @@ export default function WorkspacePage() {
   // Старт — с пустого холста: пресет Обнинск-51 удалён, район строится с нуля.
   const [baseScenario, setBaseScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
   const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
+  // Режим сравнения «До / После»: current — проект, base — зафиксированное ДО
+  // (только чтение), diff — наложение: проект + призрак базы.
+  const [diffView, setDiffView] = useState<'current' | 'base' | 'diff'>('current');
+  // Откуда взялось ДО: для подписи в сайдбаре («ДО = загрузка» / «ДО зафиксировано в …»).
+  const [baseStamp, setBaseStamp] = useState<string>('ДО — пустой холст');
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
@@ -47,6 +54,9 @@ export default function WorkspacePage() {
   const [projectsList, setProjectsList] = useState<ProjectSummary[]>([]);
   const [showProjectsModal, setShowProjectsModal] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  // Дашборд глубокого аудита + история замеров для его графика.
+  const [showAuditModal, setShowAuditModal] = useState<boolean>(false);
+  const [historySnapshots, setHistorySnapshots] = useState<HistorySnapshot[]>([]);
 
   const [simPlaying, setSimPlaying] = useState<boolean>(true);
   const [simSpeed, setSimSpeed] = useState<1 | 2 | 5>(1);
@@ -94,6 +104,70 @@ export default function WorkspacePage() {
 
   const activePath = selectedBuildingId ? metrics.busPaths[selectedBuildingId] : null;
   const activePathNodeIds = activePath ? activePath.pathNodeIds : [];
+  // Путь того же дома в базовом ДО (серый след в режиме «Дифф»).
+  const baseActivePath = selectedBuildingId ? baseMetrics.busPaths[selectedBuildingId] : null;
+  const baseActivePathNodeIds = baseActivePath ? baseActivePath.pathNodeIds : [];
+  // Персональный аудит: кому короче/длиннее до остановки + дельты по домам
+  // для раскраски карты в режиме «Дифф».
+  const impact = useMemo(
+    () => computeResidentImpact(currentScenario, baseScenario, metrics, baseMetrics),
+    [currentScenario, baseScenario, metrics, baseMetrics],
+  );
+  const buildingDeltas = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const b of impact.buildings) {
+      if (b.deltaM !== null) map[b.id] = b.deltaM;
+    }
+    return map;
+  }, [impact]);
+  const openAudit = useCallback(() => setShowAuditModal(true), []);
+  const closeAudit = useCallback(() => setShowAuditModal(false), []);
+  // История решений для графика аудита: дебаунс 500мс после изменения метрик,
+  // храним последние 12 шагов. Дубли (фиксация ДО без изменения схемы —
+  // пересчёт даёт тот же объект метрик) отсекаем сравнением с последним
+  // снэпшотом, иначе график засорится плоскими точками.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setHistorySnapshots((prev) => {
+        const step = (prev[prev.length - 1]?.step ?? 0) + 1;
+        const snapshot: HistorySnapshot = {
+          step,
+          time: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+          label: `Шаг #${step}`,
+          busDist: metrics.weightedAvgBusDistM,
+          parkPct: metrics.parkAccessPercent,
+          schoolPct: metrics.schoolAccessPercent,
+          mobilityPct: metrics.mobilityIndex,
+          budget: metrics.budgetSpentRub,
+          medianBusDist: metrics.medianBusDistM,
+          p90BusDist: metrics.p90BusDistM,
+          greenM2: metrics.greenM2PerResident,
+          bikePct: metrics.bikeAccessPercent,
+          bottlenecks: metrics.bottlenecks.length,
+          residents: metrics.totalResidents,
+        };
+        const last = prev[prev.length - 1];
+        if (
+          last &&
+          last.busDist === snapshot.busDist &&
+          last.parkPct === snapshot.parkPct &&
+          last.schoolPct === snapshot.schoolPct &&
+          last.mobilityPct === snapshot.mobilityPct &&
+          last.budget === snapshot.budget &&
+          last.medianBusDist === snapshot.medianBusDist &&
+          last.p90BusDist === snapshot.p90BusDist &&
+          last.greenM2 === snapshot.greenM2 &&
+          last.bikePct === snapshot.bikePct &&
+          last.bottlenecks === snapshot.bottlenecks &&
+          last.residents === snapshot.residents
+        ) {
+          return prev;
+        }
+        return [...prev.slice(-11), snapshot];
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [metrics]);
   const selectedBuilding = currentScenario.buildings.find((b) => b.id === selectedBuildingId);
   const selectedEdge = currentScenario.edges.find((e) => e.id === selectedEdgeId) ?? null;
 
@@ -110,17 +184,17 @@ export default function WorkspacePage() {
       const newNodes = [...prev.nodes];
 
       if (!node1) {
-        node1 = { id: `n-${Date.now()}-1`, x: x1, y: y1, label: 'Узел', type: 'intersection', isCustom: true };
+        node1 = { id: `n-${uniqueStamp()}-1`, x: x1, y: y1, label: 'Узел', type: 'intersection', isCustom: true };
         newNodes.push(node1);
       }
       if (!node2) {
-        node2 = { id: `n-${Date.now()}-2`, x: x2, y: y2, label: 'Узел', type: 'intersection', isCustom: true };
+        node2 = { id: `n-${uniqueStamp()}-2`, x: x2, y: y2, label: 'Узел', type: 'intersection', isCustom: true };
         newNodes.push(node2);
       }
 
       const lengthM = Math.round(Math.hypot(x2 - x1, y2 - y1) * 1.1);
       const newEdge: GraphEdge = {
-        id: `e-${Date.now()}`,
+        id: `e-${uniqueStamp()}`,
         from: node1.id,
         to: node2.id,
         lengthM,
@@ -145,7 +219,7 @@ export default function WorkspacePage() {
       const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
 
       const newBuilding: Building = {
-        id: `b-${Date.now()}`,
+        id: `b-${uniqueStamp()}`,
         name: `Корпус ${prev.buildings.length + 1} (Кастом)`,
         address: 'Проектируемый квартал',
         floors,
@@ -170,7 +244,7 @@ export default function WorkspacePage() {
     setCurrentScenario((prev) => {
       const gateNodeId = findClosestNodeId(points[0].x, points[0].y, prev.nodes);
       const newAmenity: Amenity = {
-        id: `park-${Date.now()}`,
+        id: `park-${uniqueStamp()}`,
         name: 'Проектируемый сквер',
         type: 'park',
         nodeId: gateNodeId,
@@ -205,7 +279,7 @@ export default function WorkspacePage() {
       }
       const count = prev.amenities.filter((a) => a.type === 'bus_stop').length + 1;
       const stop: Amenity = {
-        id: `bus-${Date.now()}`,
+        id: `bus-${uniqueStamp()}`,
         name: `Остановка №${count}`,
         type: 'bus_stop',
         nodeId: cut.nodeId,
@@ -329,7 +403,7 @@ export default function WorkspacePage() {
       const ny = len > 0 ? dx / len : 0;
 
       const n1: GraphNode = {
-        id: `nc-${Date.now()}-1`,
+        id: `nc-${uniqueStamp()}-1`,
         x: Math.round(px + nx * 18),
         y: Math.round(py + ny * 18),
         label: 'Створ перехода',
@@ -337,7 +411,7 @@ export default function WorkspacePage() {
         isCustom: true,
       };
       const n2: GraphNode = {
-        id: `nc-${Date.now()}-2`,
+        id: `nc-${uniqueStamp()}-2`,
         x: Math.round(px - nx * 18),
         y: Math.round(py - ny * 18),
         label: 'Створ перехода',
@@ -346,7 +420,7 @@ export default function WorkspacePage() {
       };
 
       const crossingEdge: GraphEdge = {
-        id: `cross-${Date.now()}`,
+        id: `cross-${uniqueStamp()}`,
         from: n1.id,
         to: n2.id,
         lengthM: isUnderpass ? 55 : 35,
@@ -372,7 +446,7 @@ export default function WorkspacePage() {
       if (!edge) return prev;
 
       const repairNode: GraphNode = {
-        id: `rn-${Date.now()}`,
+        id: `rn-${uniqueStamp()}`,
         x: px,
         y: py,
         label: 'Зона ремонта',
@@ -382,22 +456,28 @@ export default function WorkspacePage() {
 
       const part1: GraphEdge = {
         ...edge,
-        id: `ep1-${Date.now()}`,
+        id: `ep1-${uniqueStamp()}`,
         from: edge.from,
         to: repairNode.id,
         lengthM: Math.round(edge.lengthM / 2),
         isActive: true,
         isCustom: true,
+        inheritedLanes: true,
+        inheritedSidewalkLeft: true,
+        inheritedSidewalkRight: true,
       };
 
       const part2: GraphEdge = {
         ...edge,
-        id: `ep2-${Date.now()}`,
+        id: `ep2-${uniqueStamp()}`,
         from: repairNode.id,
         to: edge.to,
         lengthM: Math.round(edge.lengthM / 2),
         isActive: false,
         isCustom: true,
+        inheritedLanes: true,
+        inheritedSidewalkLeft: true,
+        inheritedSidewalkRight: true,
       };
 
       return {
@@ -418,7 +498,7 @@ export default function WorkspacePage() {
     setCurrentScenario((prev) => ({
       ...prev,
       edges: prev.edges.map((e) =>
-        e.id === edgeId ? { ...e, lanes: e.lanes === 4 ? 2 : 4, isCustom: true } : e,
+        e.id === edgeId ? { ...e, lanes: e.lanes === 4 ? 2 : 4, inheritedLanes: false, isCustom: true } : e,
       ),
     }));
   };
@@ -434,8 +514,8 @@ export default function WorkspacePage() {
       edges: prev.edges.map((e) => {
         if (e.id !== edgeId) return e;
         return side === 'left'
-          ? { ...e, hasSidewalkLeft: !e.hasSidewalkLeft, isCustom: true }
-          : { ...e, hasSidewalkRight: !e.hasSidewalkRight, isCustom: true };
+          ? { ...e, hasSidewalkLeft: !e.hasSidewalkLeft, inheritedSidewalkLeft: false, isCustom: true }
+          : { ...e, hasSidewalkRight: !e.hasSidewalkRight, inheritedSidewalkRight: false, isCustom: true };
       }),
     }));
   };
@@ -462,11 +542,46 @@ export default function WorkspacePage() {
     }));
   };
 
+  // Конверт персиста в PostgreSQL (поле data таблицы projects — непрозрачный JSON):
+  // вместе с проектом храним зафиксированное ДО. Старые сейвы (голый сценарий
+  // без version) грузятся как раньше, ДО при этом = копия загруженного.
+  const deepCopy = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+  const parseProjectData = (raw: string): { scenario: DistrictScenario; base: DistrictScenario | null } => {
+    const parsed = JSON.parse(raw) as DistrictScenario & {
+      version?: number;
+      scenario?: DistrictScenario;
+      baseScenario?: DistrictScenario | null;
+    };
+    if (parsed && parsed.version === 1 && parsed.scenario) {
+      return { scenario: parsed.scenario, base: parsed.baseScenario ?? null };
+    }
+    return { scenario: parsed, base: null };
+  };
+
+  // Железобетонная фиксация ДО: глубокая копия текущего в память.
+  // В PostgreSQL база уедет следующим «Сохранить» (конверт выше).
+  const handleFixBase = () => {
+    setBaseScenario(deepCopy(currentScenario));
+    const stamp = `ДО зафиксировано в ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`;
+    setBaseStamp(stamp);
+    setDiffView('current');
+    showHint('Точка «ДО» зафиксирована — проектируйте, дельты считаются от неё');
+  };
+
+  const handleRollbackToBase = () => {
+    setCurrentScenario(deepCopy(baseScenario));
+    setSelectedBuildingId(baseScenario.buildings[0]?.id ?? null);
+    setSelectedEdgeId(null);
+    setDiffView('current');
+    showHint('Откатились к зафиксированному «ДО» — все Δ обнулились');
+  };
+
   const handleSaveProject = async () => {
     if (!token) return;
     setIsSaving(true);
     try {
-      const dataStr = JSON.stringify(currentScenario);
+      const dataStr = JSON.stringify({ version: 1, scenario: currentScenario, baseScenario });
       if (currentProjectId) {
         await updateProject(token, currentProjectId, projectName, dataStr);
       } else {
@@ -474,7 +589,7 @@ export default function WorkspacePage() {
         setCurrentProjectId(created.id);
       }
       await refreshProjectsList();
-      showHint('Проект успешно сохранён в БД');
+      showHint('Проект и точка «ДО» сохранены в БД');
     } finally {
       setIsSaving(false);
     }
@@ -484,13 +599,23 @@ export default function WorkspacePage() {
     if (!token) return;
     try {
       const proj = await getProject(token, id);
-      const parsed = JSON.parse(proj.data) as DistrictScenario;
-      setCurrentScenario(parsed);
+      const { scenario, base } = parseProjectData(proj.data);
+      setCurrentScenario(scenario);
+      if (base) {
+        setBaseScenario(base);
+        setBaseStamp('ДО — из сохранения проекта');
+        showHint(`Загружен проект: ${proj.name}. Базовая точка «ДО» восстановлена`);
+      } else {
+        setBaseScenario(deepCopy(scenario));
+        setBaseStamp('ДО = загрузка проекта');
+        showHint(`Загружен проект: ${proj.name}. Базовая точка «ДО» зафиксирована`);
+      }
+      setDiffView('current');
       setCurrentProjectId(proj.id);
       setProjectName(proj.name);
-      setSelectedBuildingId(parsed.buildings[0]?.id ?? null);
+      setSelectedBuildingId(scenario.buildings[0]?.id ?? null);
+      setSelectedEdgeId(null);
       setShowProjectsModal(false);
-      showHint(`Загружен проект: ${proj.name}`);
     } catch {
       showHint('Ошибка загрузки проекта');
     }
@@ -531,11 +656,18 @@ export default function WorkspacePage() {
             onClear={() => {
               setCurrentScenario(EMPTY_DISTRICT);
               setBaseScenario(EMPTY_DISTRICT);
+              setDiffView('current');
+              setBaseStamp('ДО — пустой холст');
               setCurrentProjectId(null);
               setProjectName('Новый чертёж');
               setSelectedBuildingId(null);
               showHint('Холст очищен');
             }}
+            onFixBase={handleFixBase}
+            onRollbackToBase={handleRollbackToBase}
+            onOpenAudit={openAudit}
+            diffView={diffView}
+            onDiffViewChange={setDiffView}
             onOpenProjects={() => setShowProjectsModal(true)}
             onSaveProject={handleSaveProject}
             isSaving={isSaving}
@@ -577,12 +709,17 @@ export default function WorkspacePage() {
               {viewMode === '2d' ? (
                 <DistrictMap
                   scenario={currentScenario}
+                  baseScenario={baseScenario}
+                  diffView={diffView}
                   selectedBuildingId={selectedBuildingId}
                   selectedEdgeId={selectedEdgeId}
                   onSelectBuilding={setSelectedBuildingId}
                   onSelectEdge={setSelectedEdgeId}
                   activePathNodeIds={activePathNodeIds}
-                  edgeLoads={metrics.edgeLoads}
+                  baseActivePathNodeIds={baseActivePathNodeIds}
+                  buildingDeltas={buildingDeltas}
+                  edgeLoads={diffView === 'base' ? baseMetrics.edgeLoads : metrics.edgeLoads}
+                  busPaths={diffView === 'base' ? baseMetrics.busPaths : metrics.busPaths}
                   toolMode={toolMode}
                   onAddRoad={handleAddRoad}
                   onAddPolyBuilding={handleAddPolyBuilding}
@@ -620,6 +757,8 @@ export default function WorkspacePage() {
                   edgeLoads={metrics.edgeLoads}
                   busPaths={metrics.busPaths}
                   parkPaths={metrics.parkPaths}
+                  schoolPaths={metrics.schoolPaths}
+                  shopPaths={metrics.shopPaths}
                   simPlaying={simPlaying}
                   simSpeed={simSpeed}
                 />
@@ -630,9 +769,14 @@ export default function WorkspacePage() {
               <DistrictSidebar
                 selectedBuilding={selectedBuilding}
                 selectedEdge={selectedEdge}
-                activePath={activePath}
+                activePath={diffView === 'base' ? baseActivePath : activePath}
                 metrics={metrics}
                 baseMetrics={baseMetrics}
+                impact={impact}
+                baseStamp={baseStamp}
+                onFixBase={handleFixBase}
+                onRollbackToBase={handleRollbackToBase}
+                onOpenAudit={openAudit}
               />
             </div>
           </div>
@@ -643,6 +787,19 @@ export default function WorkspacePage() {
           onClose={() => setShowProjectsModal(false)}
           projects={projectsList}
           onSelectProject={handleLoadProject}
+        />
+
+        <AuditDashboardModal
+          isOpen={showAuditModal}
+          onClose={closeAudit}
+          projectName={projectName}
+          baseStamp={baseStamp}
+          metrics={metrics}
+          baseMetrics={baseMetrics}
+          impact={impact}
+          history={historySnapshots}
+          onFixBase={handleFixBase}
+          onRollbackToBase={handleRollbackToBase}
         />
 
         {/* Стеклянный тост подсказок и инженерных предупреждений */}

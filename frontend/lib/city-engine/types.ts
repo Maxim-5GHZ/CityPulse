@@ -26,6 +26,12 @@ export interface GraphEdge {
   isRoundabout?: boolean;
   isCustom?: boolean;
   loadCount?: number; // Нагрузка: сколько жителей проходит по этому ребру
+  // Наследованная инфраструктура: полосы/тротуары достались от исходного ребра
+  // при разрезе, кольце или ремонте — бюджет за них не платит (только за новое).
+  // Любая ручная смена полос/тротуара сбрасывает свой флаг.
+  inheritedLanes?: boolean;
+  inheritedSidewalkLeft?: boolean;
+  inheritedSidewalkRight?: boolean;
 }
 
 export interface Building {

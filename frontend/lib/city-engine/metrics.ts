@@ -52,6 +52,82 @@ function percentile90(values: number[]): number {
   return sorted[idx];
 }
 
+// --- Персональный аудит «До / После»: кому стало лучше, кому хуже ---
+// Порог ±5 м гасит шум округления координат. Дома, которых не было в базе
+// (новострой), и снесённые — отдельными строками, а не «плюсом/минусом»:
+// у них нет корректного «было».
+export interface BuildingImpact {
+  id: string;
+  name: string;
+  residents: number;
+  beforeM: number | null;
+  afterM: number;
+  deltaM: number | null;
+}
+
+export interface ResidentImpactSummary {
+  improvedResidents: number;
+  worsenedResidents: number;
+  unchangedResidents: number;
+  addedResidents: number;
+  removedResidents: number;
+  maxSavedMeters: number;
+  maxLossMeters: number;
+  buildings: BuildingImpact[];
+}
+
+const IMPACT_NOISE_M = 5;
+
+export function computeResidentImpact(
+  currentScenario: DistrictScenario,
+  baseScenario: DistrictScenario,
+  current: DistrictMetrics,
+  base: DistrictMetrics,
+): ResidentImpactSummary {
+  const summary: ResidentImpactSummary = {
+    improvedResidents: 0,
+    worsenedResidents: 0,
+    unchangedResidents: 0,
+    addedResidents: 0,
+    removedResidents: 0,
+    maxSavedMeters: 0,
+    maxLossMeters: 0,
+    buildings: [],
+  };
+  const distOf = (paths: Record<string, PathResult | null>, id: string): number | null => {
+    const p = paths[id];
+    return p ? p.distanceM : null;
+  };
+  for (const b of currentScenario.buildings) {
+    const after = distOf(current.busPaths, b.id) ?? CITY_DEFAULTS.isolationPenaltyM;
+    const beforeRaw = distOf(base.busPaths, b.id);
+    if (beforeRaw === null && !(b.id in base.busPaths)) {
+      // Дома не было в базе — новострой, сравнивать не с чем.
+      summary.addedResidents += b.residents;
+      summary.buildings.push({ id: b.id, name: b.name, residents: b.residents, beforeM: null, afterM: after, deltaM: null });
+      continue;
+    }
+    const before = beforeRaw ?? CITY_DEFAULTS.isolationPenaltyM;
+    const delta = after - before;
+    summary.buildings.push({ id: b.id, name: b.name, residents: b.residents, beforeM: before, afterM: after, deltaM: delta });
+    if (delta < -IMPACT_NOISE_M) {
+      summary.improvedResidents += b.residents;
+      summary.maxSavedMeters = Math.max(summary.maxSavedMeters, Math.abs(delta));
+    } else if (delta > IMPACT_NOISE_M) {
+      summary.worsenedResidents += b.residents;
+      summary.maxLossMeters = Math.max(summary.maxLossMeters, delta);
+    } else {
+      summary.unchangedResidents += b.residents;
+    }
+  }
+  // Снесённые: были в базе, в текущем нет.
+  const currentIds = new Set(currentScenario.buildings.map((b) => b.id));
+  for (const b of baseScenario.buildings) {
+    if (!currentIds.has(b.id)) summary.removedResidents += b.residents;
+  }
+  return summary;
+}
+
 export function calculateMetrics(scenario: DistrictScenario, baseScenario: DistrictScenario): DistrictMetrics {
   const adj = buildAdjacency(scenario.nodes, scenario.edges);
   const busAmenities = scenario.amenities.filter((a) => a.type === 'bus_stop');
@@ -121,18 +197,20 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
   const hospitalPoints = taggedPoints('hospital');
   const shopPoints = taggedPoints('shop');
 
-  // Лучший путь Дейкстры до ближайшей точки обслуживания.
-  const bestService = (gateNodeId: string, points: ServicePoint[], defaultRadius: number) => {
+  // Лучший путь Дейкстры до ближайшей точки обслуживания + флаг покрытия.
+  // Покрытие проверяется по собственному радиусу КАЖДОЙ точки, а не радиусу
+  // ближайшей: близкая школа с маленьким радиусом не должна затенять дальнюю
+  // с большим (раньше дом считался непокрытым в таком кейсе).
+  const bestService = (gateNodeId: string, points: ServicePoint[]) => {
     let best: PathResult | null = null;
-    let radius = defaultRadius;
+    let covered = false;
     for (const sp of points) {
       const p = findShortestPath(gateNodeId, sp.nodeId, adj);
-      if (p && (!best || p.distanceM < best.distanceM)) {
-        best = p;
-        radius = sp.radiusM;
-      }
+      if (!p) continue;
+      if (!best || p.distanceM < best.distanceM) best = p;
+      if (p.distanceM <= sp.radiusM) covered = true;
     }
-    return { best, radius };
+    return { best, covered };
   };
 
   for (const b of scenario.buildings) {
@@ -179,43 +257,46 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
       }
     } else {
       weightedBusDistanceSum += CITY_DEFAULTS.isolationPenaltyM * b.residents;
+      // Изолированный дом участвует в медиане/p90 тем же штрафом, что в среднем:
+      // иначе отрезанный район показывал бы «идеальные нули».
+      busDistances.push(CITY_DEFAULTS.isolationPenaltyM);
     }
 
     // Путь к парку (радиус — из карточки сквера, дефолт 350)
     let bestParkPath: PathResult | null = null;
-    let bestParkRadius = CITY_DEFAULTS.parkDefaultRadiusM;
+    let parkCovered = false;
     for (const park of parkAmenities) {
       const p = findShortestPath(b.gateNodeId, park.nodeId, adj);
-      if (p && (!bestParkPath || p.distanceM < bestParkPath.distanceM)) {
-        bestParkPath = p;
-        bestParkRadius = park.coverageRadiusM || CITY_DEFAULTS.parkDefaultRadiusM;
-      }
+      if (!p) continue;
+      if (!bestParkPath || p.distanceM < bestParkPath.distanceM) bestParkPath = p;
+      const parkRadius = park.coverageRadiusM || CITY_DEFAULTS.parkDefaultRadiusM;
+      if (p.distanceM <= parkRadius) parkCovered = true;
     }
     parkPaths[b.id] = bestParkPath;
-    if (bestParkPath && bestParkPath.distanceM <= bestParkRadius) {
+    if (bestParkPath && parkCovered) {
       parkCoveredResidents += b.residents;
     }
 
     // Соцобъекты: школа (+ отдельно стоящие из старых сейвов), полиция,
     // больница, магазин — покрытие по Дейкстре, радиус 500.
-    const school = bestService(b.gateNodeId, schoolPoints, CITY_DEFAULTS.schoolDefaultRadiusM);
+    const school = bestService(b.gateNodeId, schoolPoints);
     schoolPaths[b.id] = school.best;
-    if (school.best && school.best.distanceM <= school.radius) {
+    if (school.best && school.covered) {
       schoolCoveredResidents += b.residents;
     }
-    const police = bestService(b.gateNodeId, policePoints, CITY_DEFAULTS.serviceDefaultRadiusM);
+    const police = bestService(b.gateNodeId, policePoints);
     policePaths[b.id] = police.best;
-    if (police.best && police.best.distanceM <= police.radius) {
+    if (police.best && police.covered) {
       policeCoveredResidents += b.residents;
     }
-    const hospital = bestService(b.gateNodeId, hospitalPoints, CITY_DEFAULTS.serviceDefaultRadiusM);
+    const hospital = bestService(b.gateNodeId, hospitalPoints);
     hospitalPaths[b.id] = hospital.best;
-    if (hospital.best && hospital.best.distanceM <= hospital.radius) {
+    if (hospital.best && hospital.covered) {
       hospitalCoveredResidents += b.residents;
     }
-    const shop = bestService(b.gateNodeId, shopPoints, CITY_DEFAULTS.serviceDefaultRadiusM);
+    const shop = bestService(b.gateNodeId, shopPoints);
     shopPaths[b.id] = shop.best;
-    if (shop.best && shop.best.distanceM <= shop.radius) {
+    if (shop.best && shop.covered) {
       shopCoveredResidents += b.residents;
     }
   }
@@ -264,9 +345,11 @@ export function calculateMetrics(scenario: DistrictScenario, baseScenario: Distr
     if (e.isCustom) {
       if (e.type === 'crossing') budgetSpentRub += INFRA_COSTS.add_crossing;
       if (e.type === 'underpass') budgetSpentRub += INFRA_COSTS.add_underpass;
-      if (e.lanes === 4) budgetSpentRub += INFRA_COSTS.upgrade_4_lanes;
-      if (e.hasSidewalkLeft) budgetSpentRub += INFRA_COSTS.add_sidewalk;
-      if (e.hasSidewalkRight) budgetSpentRub += INFRA_COSTS.add_sidewalk;
+      // Полосы/тротуары оплачиваются только если построены в сессии:
+      // наследники разреза/кольца/ремонта (inherited*) их уже имели.
+      if (e.lanes === 4 && !e.inheritedLanes) budgetSpentRub += INFRA_COSTS.upgrade_4_lanes;
+      if (e.hasSidewalkLeft && !e.inheritedSidewalkLeft) budgetSpentRub += INFRA_COSTS.add_sidewalk;
+      if (e.hasSidewalkRight && !e.inheritedSidewalkRight) budgetSpentRub += INFRA_COSTS.add_sidewalk;
     }
     if (!e.isActive) budgetSpentRub += INFRA_COSTS.block_street;
   }
