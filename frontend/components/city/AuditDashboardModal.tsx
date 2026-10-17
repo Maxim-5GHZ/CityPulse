@@ -225,7 +225,7 @@ export default function AuditDashboardModal({
   } else if (impact.worsenedResidents > impact.improvedResidents) {
     recommendations.push({ tone: 'bad', text: `Проигравших больше, чем выигравших: ${impact.worsenedResidents} против ${impact.improvedResidents} чел. — проверьте красные корпуса в режиме «Дифф».` });
   } else if (impact.worsenedResidents > 0) {
-    recommendations.push({ tone: 'warn', text: `В минусе ${impact.worsenedResidents} чел. (макс. +${impact.maxLossMeters} м) — детали по домам в сайдбаре.` });
+    recommendations.push({ tone: 'warn', text: `В минусе ${impact.worsenedResidents} чел. (макс. +${impact.maxLossMeters} м) — детали в блоке «По домам» ниже.` });
   } else {
     recommendations.push({ tone: 'good', text: 'Баланс жителей не изменился: пути в пределах шума ±5 м.' });
   }
@@ -554,6 +554,36 @@ export default function AuditDashboardModal({
                 ↩ Откатить к «ДО»
               </button>
             </div>
+
+            {(impact.worsenedResidents > 0 || impact.improvedResidents > 0) && (
+              <details className="mt-3 rounded-2xl border border-white/60 bg-white/30 px-3 py-2 dark:border-white/15 dark:bg-white/5">
+                <summary className="cursor-pointer text-xs font-bold uppercase tracking-tight text-gray-700 dark:text-gray-200">
+                  По домам: кто выиграл и проиграл (путь до остановки)
+                </summary>
+                <div className="mt-2 space-y-0.5 text-xs">
+                  {impact.buildings
+                    .filter((b) => b.deltaM !== null && b.deltaM > 5)
+                    .sort((a, b) => (b.deltaM ?? 0) - (a.deltaM ?? 0))
+                    .slice(0, 5)
+                    .map((b) => (
+                      <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
+                        <span className="truncate">{b.name} · {b.residents} чел.</span>
+                        <b className="shrink-0 tabular-nums text-rose-600 dark:text-rose-400">+{b.deltaM} м</b>
+                      </div>
+                    ))}
+                  {impact.buildings
+                    .filter((b) => b.deltaM !== null && b.deltaM < -5)
+                    .sort((a, b) => (a.deltaM ?? 0) - (b.deltaM ?? 0))
+                    .slice(0, 5)
+                    .map((b) => (
+                      <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
+                        <span className="truncate">{b.name} · {b.residents} чел.</span>
+                        <b className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">{b.deltaM} м</b>
+                      </div>
+                    ))}
+                </div>
+              </details>
+            )}
           </div>
         </div>
 

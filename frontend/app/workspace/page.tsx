@@ -771,8 +771,6 @@ export default function WorkspacePage() {
                 selectedEdge={selectedEdge}
                 activePath={diffView === 'base' ? baseActivePath : activePath}
                 metrics={metrics}
-                baseMetrics={baseMetrics}
-                impact={impact}
                 baseStamp={baseStamp}
                 onFixBase={handleFixBase}
                 onRollbackToBase={handleRollbackToBase}
