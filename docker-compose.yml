@@ -21,6 +21,7 @@ services:
       retries: 10
 
   backend:
+    image: citypulse-backend-dev
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
@@ -50,6 +51,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: citypulse-frontend-dev
     build:
       context: ./frontend
       dockerfile: Dockerfile.dev

@@ -4,6 +4,7 @@
 # Переопределяет backend/frontend на prod-сборку без volumes и hot reload.
 services:
   backend:
+    image: citypulse-backend-prod
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -13,6 +14,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    image: citypulse-frontend-prod
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod

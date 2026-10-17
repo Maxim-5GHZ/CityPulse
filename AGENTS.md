@@ -9,6 +9,10 @@
 
 - Next.js 14 + Spring Boot 3 (Java 21) + Postgres 16 + JWT. Подробности — в `README.md`.
 - Dev: `make dev` (фронт — http://localhost:3000, hot reload, композ рестартовать не надо).
+- Prod: только `make prod` (оба compose-файла). Голый `docker compose up`
+  теперь не подхватит prod-образ: имена разделены (`-dev`/`-prod`),
+  иначе dev-volumes (`./backend:/app`) прячут запечённые `app.jar`/`server.js`
+  и оба контейнера уходят в crash-loop (ловили дважды 17.10).
 - Фронт ходит в API только через same-origin `/backend/*` (прокси Next в dev, nginx в prod).
 - Проверки фронта (из `frontend/`): `./node_modules/.bin/tsc --noEmit` и
   `./node_modules/.bin/next lint`. Обе должны быть чистыми.
