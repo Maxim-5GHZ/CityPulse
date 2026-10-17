@@ -50,17 +50,16 @@ type Vec3 = [number, number, number];
 // САПР (960×620, Y вниз) → мир Deck.gl (центр в нуле, север вверх, Z вверх).
 const toWorld = (x: number, y: number, z = 0): Vec3 => [x - 480, 320 - y, z];
 
-// Вертикальные уровни слоёв (метры мира): разнесены, чтобы геометрия
-// не z-файтила на скользящих углах камеры.
-const Z_PARK = 0.2; // земля/газоны
-const Z_UNDER = 0.35; // тоннель — под дорогой, но над землёй
-const Z_ROAD = 0.6; // проезжая часть
-const Z_RING = 0.65; // кольцо — чуть выше примыканий
-const Z_SIDEWALK = 0.9; // тротуары/переходы/тропы — над асфальтом
-const Z_GRASS_WALK = 0.85; // пешеходы по траве и полям — на уровне лужайки
-const Z_PAVED_WALK = 1.4; // пешеходы на приподнятом тротуаре
-const Z_ACTIVE_PATH = 2.2; // активный путь Дейкстры — поверх пешеходов
-const Z_BUS_STOP = 3;
+// Вертикальные уровни слоев Deck.gl (метры)
+const Z_PARK = 0.2;
+const Z_UNDER = 0.35;
+const Z_ROAD = 0.6;
+const Z_RING = 0.65;
+const Z_SIDEWALK = 0.9;
+const Z_ACTIVE_PATH = 1.1;   // Линия маршрута лежит на полотне
+const Z_GRASS_WALK = 2.6;    // Пешеходы выше полотна дороги
+const Z_PAVED_WALK = 3.0;    // Пешеходы идут над тротуаром и над линией
+const Z_BUS_STOP = 3.5;
 
 // Ширина полотна (метры).
 const ROAD_WIDTH_WIDE = 22; // 4 полосы
@@ -743,16 +742,22 @@ export default function DeckCityView({
     }
 
     // 2. Если объект не выбран напрямую — unproject на плоскость земли targetZ = 0.
-    // Снап extended: сначала узлы/рёбра в радиусе ≤50м, иначе ближайший узел
-    // графа без радиуса (forced) с уведомлением о притяжении.
+    // Снап extended: сначала узлы/рёбра в радиусе ≤50м, иначе ближайший выход
+    // на пешеходную сеть без радиуса (forced) — точку можно ставить на траве.
     let forcedDist: number | null = null;
+    let forcedCoord: { x: number; y: number } | null = null;
     if (!targetNodeId) {
       const snap = snapRouteNodeIdExtended(scenario.nodes, scenario.edges, cadX, cadY, ROUTE_SNAP_M);
       if (snap) {
         targetNodeId = snap.nodeId;
         forcedDist = snap.forced ? snap.distM : null;
+        forcedCoord = snap.virtualCoord ?? null;
         const n = nodeMap.get(targetNodeId);
-        targetLabel = n ? (n.label || `узел (${Math.round(n.x)}, ${Math.round(n.y)})`) : 'Точка сети';
+        if (snap.forced && forcedCoord) {
+          targetLabel = `Точка на местности (${Math.round(forcedCoord.x)}, ${Math.round(forcedCoord.y)})`;
+        } else {
+          targetLabel = n ? (n.label || `узел (${Math.round(n.x)}, ${Math.round(n.y)})`) : 'Точка сети';
+        }
       }
     }
 
@@ -761,7 +766,7 @@ export default function DeckCityView({
       return;
     }
     if (forcedDist !== null) {
-      onNotify?.(`Рядом нет узла (снап ${ROUTE_SNAP_M} м) — точка притянулась к ближайшему узлу (${forcedDist} м)`);
+      onNotify?.(`Точка установлена на траве (выход на тротуар через ${forcedDist} м)`);
     }
     setRouteMenu({ x: e.clientX, y: e.clientY, nodeId: targetNodeId, label: targetLabel });
   };
@@ -814,8 +819,8 @@ export default function DeckCityView({
 
   // Генерация пула независимых пешеходов (вразнобой): каждый юнит —
   // автономный агент со своим именем, скоростью, фазой пути, направлением,
-  // целью (школа/остановка/сквер/магазин) и типом покрытия (тропинка/трава).
-  // Чередуем приоритизированный маршрут по тротуарам и срезку по газонам.
+  // целью (школа/остановка/сквер/магазин). Все идут строго по тротуарам,
+  // парковым дорожкам и зебрам — срезок через газоны и шоссе нет.
   const initialAgents = useMemo<PedestrianAgent[]>(() => {
     const agents: PedestrianAgent[] = [];
     let globalIdx = 0;
@@ -830,34 +835,29 @@ export default function DeckCityView({
       const schoolPath = schoolPaths?.[b.id];
       const shopPath = shopPaths?.[b.id];
 
-      // 1. Школьники: дом <-> школа (школы — и отдельные объекты, и корпуса
-      // с тегом school: оба уже сведены в schoolPaths движком).
+      // 1. Школьники: дом <-> школа строго по тротуарам и зебрам.
       if (schoolPath && schoolPath.pathNodeIds.length >= 2) {
-        const schoolCount = Math.min(4, Math.max(2, Math.round(b.residents / 300)));
+        const schoolCount = Math.min(3, Math.max(1, Math.round(b.residents / 350)));
         for (let k = 0; k < schoolCount; k++) {
           globalIdx++;
-          // Школьники обожают срезать: 75% идут напрямик по газонам.
-          const isGrass = k % 4 !== 0;
-          const jitter = ((k * 19) % 7 - 3) * 0.45;
-          const path = isGrass
-            ? buildGrassRoute(schoolPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
-            : buildPavedRoute(
-                schoolPath.pathNodeIds,
-                scenario,
-                nodeMap,
-                k % 2 === 0 ? 1 : -1,
-                jitter,
-                Z_PAVED_WALK,
-              );
+          const jitter = ((k * 17) % 5 - 2) * 0.3;
+          const path = buildPavedRoute(
+            schoolPath.pathNodeIds,
+            scenario,
+            nodeMap,
+            k % 2 === 0 ? 1 : -1,
+            jitter,
+            Z_PAVED_WALK,
+          );
           if (path.length < 2) continue;
           const cumDist = computeCumulativeDistances(path);
           const totalDist = cumDist[cumDist.length - 1];
           if (totalDist < 5) continue;
 
-          // Кто-то идёт из школы домой, кто-то из дома в школу.
-          const startsFromSchool = (globalIdx + k) % 2 === 1;
-          const startDist = (globalIdx * 61.3 + k * 31) % totalDist;
-          const speed = 1.1 + ((globalIdx * 13) % 5) * 0.08;
+          // Чётные идут в школу, нечётные — домой: direction совпадает с from/to.
+          const startsFromSchool = k % 2 === 1;
+          const startDist = (globalIdx * 45) % totalDist;
+          const speed = 1.15 + (k % 3) * 0.08;
           agents.push({
             id: `ped-school-${b.id}-${k}`,
             name: `${CITIZEN_NAMES[globalIdx % CITIZEN_NAMES.length]} (Ученик)`,
@@ -865,46 +865,41 @@ export default function DeckCityView({
             fromName: startsFromSchool ? 'Школа' : b.name,
             toName: startsFromSchool ? b.name : 'Школа',
             activity: startsFromSchool ? 'Из школы домой' : 'В школу',
-            pathType: isGrass ? 'trava' : 'trophinka',
+            pathType: 'trophinka',
             path,
             cumDist,
             totalDist,
             speed,
             dist: startDist,
-            direction: 1,
-            color: isGrass ? [234, 179, 8] : [249, 115, 22],
+            direction: startsFromSchool ? -1 : 1,
+            color: [249, 115, 22],
             pauseRemaining: 0,
           });
         }
       }
 
-      // 2. Пешеходы к остановке / с остановки: часть — по тротуарам,
-      // половина спешит и срезает через газон/поле.
+      // 2. Пешеходы к остановке / с остановки: строго по тротуару и зебрам.
       if (busPath && busPath.pathNodeIds.length >= 2) {
-        const busAgentCount = Math.min(5, Math.max(2, Math.round(b.residents / 350)));
+        const busAgentCount = Math.min(4, Math.max(2, Math.round(b.residents / 300)));
         for (let k = 0; k < busAgentCount; k++) {
           globalIdx++;
-          // Взрослые спешат: 50% идут по траве.
-          const isGrass = k % 2 !== 0;
-          const jitter = ((k * 17) % 5 - 2) * 0.55;
-          const path = isGrass
-            ? buildGrassRoute(busPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
-            : buildPavedRoute(
-                busPath.pathNodeIds,
-                scenario,
-                nodeMap,
-                k % 2 === 0 ? 1 : -1,
-                jitter,
-                Z_PAVED_WALK,
-              );
+          const jitter = ((k * 13) % 5 - 2) * 0.35;
+          const path = buildPavedRoute(
+            busPath.pathNodeIds,
+            scenario,
+            nodeMap,
+            k % 2 === 0 ? 1 : -1,
+            jitter,
+            Z_PAVED_WALK,
+          );
           if (path.length < 2) continue;
           const cumDist = computeCumulativeDistances(path);
           const totalDist = cumDist[cumDist.length - 1];
           if (totalDist < 5) continue;
 
-          const startsFromStop = (globalIdx + k) % 2 === 1;
-          const startDist = (globalIdx * 73.1 + k * 29) % totalDist;
-          const speed = 1.15 + ((globalIdx * 19) % 7) * 0.06; // ~4.1–5.4 км/ч
+          const startsFromStop = k % 2 === 1;
+          const startDist = (globalIdx * 60) % totalDist;
+          const speed = 1.25 + (k % 4) * 0.05;
           agents.push({
             id: `ped-bus-${b.id}-${k}`,
             name: CITIZEN_NAMES[globalIdx % CITIZEN_NAMES.length],
@@ -912,66 +907,52 @@ export default function DeckCityView({
             fromName: startsFromStop ? 'Остановка' : b.name,
             toName: startsFromStop ? b.name : 'Остановка',
             activity: startsFromStop ? 'С остановки домой' : 'На остановку',
-            pathType: isGrass ? 'trava' : 'trophinka',
+            pathType: 'trophinka',
             path,
             cumDist,
             totalDist,
             speed,
             dist: startDist,
-            direction: 1,
-            color: isGrass
-              ? [16, 185, 129]
-              : CITIZEN_PALETTE[(globalIdx * 3) % CITIZEN_PALETTE.length],
+            direction: startsFromStop ? -1 : 1,
+            color: CITIZEN_PALETTE[globalIdx % CITIZEN_PALETTE.length],
             pauseRemaining: 0,
           });
         }
       }
 
-      // 3. Пешеходы в сквер: в парк чаще идут по траве и полям.
+      // 3. Пешеходы в сквер: по парковым дорожкам и тротуарам.
       if (parkPath && parkPath.pathNodeIds.length >= 2) {
-        const parkAgentCount = Math.min(3, Math.max(1, Math.round(b.residents / 500)));
-        for (let k = 0; k < parkAgentCount; k++) {
-          globalIdx++;
-          // Гуляющие не любят асфальт: 75% идут по траве.
-          const isGrass = k % 4 !== 3;
-          const jitter = ((k * 13) % 5 - 2) * 0.6;
-          const path = isGrass
-            ? buildGrassRoute(parkPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
-            : buildPavedRoute(parkPath.pathNodeIds, scenario, nodeMap, -1, jitter, Z_PAVED_WALK);
-          if (path.length < 2) continue;
+        globalIdx++;
+        const path = buildPavedRoute(parkPath.pathNodeIds, scenario, nodeMap, 0, 0, Z_PAVED_WALK);
+        if (path.length >= 2) {
           const cumDist = computeCumulativeDistances(path);
           const totalDist = cumDist[cumDist.length - 1];
-          if (totalDist < 5) continue;
-
-          const startDist = (globalIdx * 53.7 + k * 37) % totalDist;
-          const speed = 1.05 + ((globalIdx * 11) % 6) * 0.06;
-          agents.push({
-            id: `ped-park-${b.id}-${k}`,
-            name: CITIZEN_NAMES[(globalIdx + 5) % CITIZEN_NAMES.length],
-            buildingId: b.id,
-            fromName: b.name,
-            toName: 'Сквер',
-            activity: isGrass ? 'Прогулка по траве' : 'В сквер',
-            pathType: isGrass ? 'trava' : 'trophinka',
-            path,
-            cumDist,
-            totalDist,
-            speed,
-            dist: startDist,
-            direction: 1,
-            color: [74, 222, 128],
-            pauseRemaining: 0,
-          });
+          if (totalDist >= 5) {
+            agents.push({
+              id: `ped-park-${b.id}`,
+              name: CITIZEN_NAMES[(globalIdx + 2) % CITIZEN_NAMES.length],
+              buildingId: b.id,
+              fromName: b.name,
+              toName: 'Сквер',
+              activity: 'Прогулка в парк',
+              pathType: 'trophinka',
+              path,
+              cumDist,
+              totalDist,
+              speed: 1.05,
+              dist: (globalIdx * 35) % totalDist,
+              direction: 1,
+              color: [34, 197, 94],
+              pauseRemaining: 0,
+            });
+          }
         }
       }
 
       // 4. Пешеходы в магазин / сервисы (один на дом, если путь есть).
       if (shopPath && shopPath.pathNodeIds.length >= 2) {
         globalIdx++;
-        const isGrass = globalIdx % 2 === 1;
-        const path = isGrass
-          ? buildGrassRoute(shopPath.pathNodeIds, scenario, nodeMap, 0.4, Z_GRASS_WALK)
-          : buildPavedRoute(shopPath.pathNodeIds, scenario, nodeMap, 1, 0, Z_PAVED_WALK);
+        const path = buildPavedRoute(shopPath.pathNodeIds, scenario, nodeMap, 1, 0, Z_PAVED_WALK);
         if (path.length >= 2) {
           const cumDist = computeCumulativeDistances(path);
           const totalDist = cumDist[cumDist.length - 1];
@@ -982,8 +963,8 @@ export default function DeckCityView({
               buildingId: b.id,
               fromName: b.name,
               toName: 'Магазин',
-              activity: 'За покупками',
-              pathType: isGrass ? 'trava' : 'trophinka',
+            activity: 'За покупками',
+            pathType: 'trophinka',
               path,
               cumDist,
               totalDist,
@@ -998,9 +979,8 @@ export default function DeckCityView({
       }
     });
 
-    // 5. Маршрут А → Б (точки ставит пользователь через ПКМ на 2D-карте):
-    // отдельная группа из 6 агентов идёт строго по заданной линии туда-обратно.
-    // Маршрута нет — все ведут себя как обычно (блоки 1–4 выше).
+    // 5. Маршрут А → Б (точки ставит пользователь через ПКМ в 3D):
+    // отдельная группа из 6 идёт строго по заданной линии туда-обратно.
     if (routePathNodeIds.length >= 2) {
       const routePath = buildPavedRoute(routePathNodeIds, scenario, nodeMap, 0, 0, Z_PAVED_WALK);
       if (routePath.length >= 2) {
@@ -1009,7 +989,6 @@ export default function DeckCityView({
         if (totalDist >= 5) {
           for (let k = 0; k < 6; k++) {
             globalIdx++;
-            // Чётные — туда (А → Б), нечётные — обратно по развёрнутой линии.
             const back = k % 2 === 1;
             const path = back ? [...routePath].reverse() : routePath;
             const cum = back ? computeCumulativeDistances(path) : cumDist;
@@ -1024,10 +1003,11 @@ export default function DeckCityView({
               path,
               cumDist: cum,
               totalDist,
-              speed: 1.2 + (k % 3) * 0.07,
+              speed: 1.4 + (k % 3) * 0.1,
               dist: (k * totalDist) / 6,
               direction: 1,
-              color: [168, 85, 247],
+              // Ярко-бирюзовый/лазурный цвет — максимальный контраст с асфальтом и фиолетовой линией:
+              color: [56, 189, 248],
               pauseRemaining: 0,
             });
           }
@@ -1534,9 +1514,10 @@ export default function DeckCityView({
           id: 'route-ab-line',
           data: [{ path: routeCoords }],
           getPath: (d) => d.path,
-          getColor: [168, 85, 247, 255],
-          getWidth: ACTIVE_PATH_WIDTH,
-          widthMinPixels: 4,
+          // Мягкий неоновый цвет с прозрачностью, чтобы не перекрывать людей
+          getColor: [168, 85, 247, 180],
+          getWidth: 4, // 4 метра вместо гигантских 7
+          widthMinPixels: 3,
           capRounded: true,
           jointRounded: true,
           pickable: false,
@@ -1607,33 +1588,31 @@ export default function DeckCityView({
 
   // Динамика: только пешеходы зависят от кадра симуляции, статика не трогается.
   const pedestrianLayers = useMemo(() => {
-    // 1. Лёгкие тени под пешеходами: на траве — на уровне лужайки,
-    // на тротуаре — на бордюре.
+    // 1. Тень под пешеходом
     const shadows = new ScatterplotLayer<DisplayPedestrian>({
       id: 'pedestrian-shadows',
       data: displayAgents,
-      getPosition: (d) => [d.x, d.y, d.pathType === 'trava' ? 0.22 : Z_SIDEWALK + 0.05],
-      getRadius: 1.0,
-      radiusMinPixels: 2,
-      radiusMaxPixels: 6,
-      getFillColor: [15, 23, 42, 110],
+      getPosition: (d) => [d.x, d.y, Z_ROAD + 0.1],
+      getRadius: 2.2,
+      radiusMinPixels: 4,
+      radiusMaxPixels: 8,
+      getFillColor: [0, 0, 0, 140],
       stroked: false,
       pickable: false,
     });
 
-    // 2. Индивидуальные юниты: на тропинках — с белой каймой, по траве/полям —
-    // с изумрудной. Pickable ради тултипа, клик форвардится дому под курсором.
+    // 2. Тело пешехода (яркая заметная фигура)
     const units = new ScatterplotLayer<DisplayPedestrian>({
       id: 'pedestrian-units',
       data: displayAgents,
       getPosition: (d) => [d.x, d.y, d.z],
-      getRadius: 1.8,
-      radiusMinPixels: 3.5,
-      radiusMaxPixels: 9,
+      getRadius: 2.8,
+      radiusMinPixels: 7,   // Теперь фигурка не схлопнется меньше 7 пикселей!
+      radiusMaxPixels: 16,
       getFillColor: (d) => [...d.color, 255],
-      getLineColor: (d) => (d.pathType === 'trava' ? [52, 211, 153, 240] : [255, 255, 255, 220]),
+      getLineColor: [255, 255, 255, 255], // Белая контрастная обводка
       stroked: true,
-      lineWidthMinPixels: 1.4,
+      lineWidthMinPixels: 2,
       pickable: true,
       onClick: (info) => {
         forwardBuildingClick(info.x, info.y);
@@ -1641,7 +1620,20 @@ export default function DeckCityView({
       },
     });
 
-    return [shadows, units];
+    // 3. Светящаяся верхушка (голова / маячок)
+    const heads = new ScatterplotLayer<DisplayPedestrian>({
+      id: 'pedestrian-heads',
+      data: displayAgents,
+      getPosition: (d) => [d.x, d.y, d.z + 0.8],
+      getRadius: 1.2,
+      radiusMinPixels: 3,
+      radiusMaxPixels: 7,
+      getFillColor: [255, 255, 255, 240],
+      stroked: false,
+      pickable: false,
+    });
+
+    return [shadows, units, heads];
   }, [displayAgents, forwardBuildingClick]);
 
   const layers = useMemo(

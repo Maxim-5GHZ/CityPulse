@@ -22,16 +22,20 @@ export function buildAdjacency(
     if (mobilityOnly && !e.isAccessible) continue;
 
     // Умные веса: люди выбирают логичные маршруты, а не геометрически короткие.
+    // Пешеход не ходит по проезжей части: голая дорога без тротуаров —
+    // заградительный штраф, переход — только по зебрам.
     let weight = e.lengthM;
     if (e.type === 'road') {
-      if (!e.hasSidewalkLeft && !e.hasSidewalkRight) weight *= 3.5; // сильный штраф: обочина проезжей части
-      else weight *= 1.2; // лёгкий штраф за шум и выхлопы (по сравнению со сквером)
+      if (!e.hasSidewalkLeft && !e.hasSidewalkRight) weight *= 25.0; // пешеходу туда нельзя
+      else weight *= 1.05; // дорога с тротуаром: комфортно, но улицу переходим в створах
+    } else if (e.type === 'sidewalk') {
+      weight *= 0.85; // выделенный тротуар приоритетнее дороги
     } else if (e.type === 'park_path') {
-      weight *= 0.6; // бонус: срезы через парки
+      weight *= 0.7; // скверы и парковые дорожки притягивают пешеходов
     } else if (e.type === 'crossing') {
-      weight *= 0.4; // супер-бонус: наземные зебры притягивают
+      weight *= 0.25; // зебра — самый приоритетный способ пересечь проезжую часть
     } else if (e.type === 'underpass') {
-      weight *= 2.0; // штраф: лестницы подземных переходов
+      weight *= 1.8; // лестницы неудобны, но безопасны
     }
 
     adj.get(e.from)?.push({ to: e.to, edgeId: e.id, lengthM: e.lengthM, isAccessible: e.isAccessible, weight });
