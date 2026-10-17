@@ -26,6 +26,7 @@ interface DistrictToolbarProps {
   onFixBase: () => void;
   onRollbackToBase: () => void;
   onOpenAudit: () => void;
+  baseStamp: string;
 }
 
 const glassPanelCls =
@@ -55,6 +56,7 @@ export default function DistrictToolbar({
   onFixBase,
   onRollbackToBase,
   onOpenAudit,
+  baseStamp,
 }: DistrictToolbarProps) {
   return (
     <div className="mb-3 space-y-2">
@@ -262,6 +264,9 @@ export default function DistrictToolbar({
         >
           📊 Аналитика
         </button>
+        <span aria-live="polite" className="ml-auto shrink-0 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+          {baseStamp}
+        </span>
       </div>
     </div>
   );

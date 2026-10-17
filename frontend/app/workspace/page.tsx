@@ -8,7 +8,6 @@ import { useAuth } from '@/lib/auth';
 import AppHeader from '@/components/AppHeader';
 import DistrictMap, { RouteSelection, ToolMode } from '@/components/city/DistrictMap';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
-import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
 import AuditDashboardModal, { HistorySnapshot } from '@/components/city/AuditDashboardModal';
 import { EMPTY_DISTRICT } from '@/lib/city-engine/presets';
@@ -48,9 +47,6 @@ export default function WorkspacePage() {
   // Маршрут А → Б: точки ставит пользователь через ПКМ на 2D-карте,
   // путь считают умным Дейкстрой; те же узлы идут в 3D человечкам.
   const [route, setRoute] = useState<RouteSelection | null>(null);
-
-  // Мобильный таб: на смартфонах переключаемся между чертежом и панелью аудита
-  const [mobileTab, setMobileTab] = useState<'canvas' | 'inspector'>('canvas');
 
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>('Проект района 2040');
@@ -171,8 +167,6 @@ export default function WorkspacePage() {
     }, 500);
     return () => clearTimeout(timer);
   }, [metrics]);
-  const selectedBuilding = currentScenario.buildings.find((b) => b.id === selectedBuildingId);
-  const selectedEdge = currentScenario.edges.find((e) => e.id === selectedEdgeId) ?? null;
 
   const handleAddRoad = (
     x1: number,
@@ -669,6 +663,7 @@ export default function WorkspacePage() {
             onFixBase={handleFixBase}
             onRollbackToBase={handleRollbackToBase}
             onOpenAudit={openAudit}
+            baseStamp={baseStamp}
             diffView={diffView}
             onDiffViewChange={setDiffView}
             onOpenProjects={() => setShowProjectsModal(true)}
@@ -680,35 +675,10 @@ export default function WorkspacePage() {
             onSimSpeedChange={setSimSpeed}
           />
 
-          {/* Мобильный сегментированный контрол (только для малых экранов) */}
-          <div className="mb-3 flex rounded-full border border-white/60 bg-white/40 p-1 backdrop-blur-xl lg:hidden dark:border-white/20 dark:bg-white/10">
-            <button
-              type="button"
-              onClick={() => setMobileTab('canvas')}
-              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
-                mobileTab === 'canvas'
-                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
-                  : 'text-gray-600 dark:text-gray-300'
-              }`}
-            >
-              {viewMode === '2d' ? '2D Чертёж' : '3D Модель'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setMobileTab('inspector')}
-              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
-                mobileTab === 'inspector'
-                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
-                  : 'text-gray-600 dark:text-gray-300'
-              }`}
-            >
-              Аудит и метрики
-            </button>
-          </div>
-
-          {/* Основная рабочая область: 12-колоночный грид с адаптивным отображением */}
-          <div className="grid gap-4 lg:grid-cols-12">
-            <div className={`space-y-4 lg:col-span-8 ${mobileTab === 'inspector' ? 'hidden lg:block' : 'block'}`}>
+          {/* Основная рабочая область: чертёж во всю ширину (инспектор всплывает
+              попапом у объекта, сайдбара больше нет) */}
+          <div>
+            <div className="space-y-4">
               {viewMode === '2d' ? (
                 <DistrictMap
                   scenario={currentScenario}
@@ -770,18 +740,6 @@ export default function WorkspacePage() {
                   simSpeed={simSpeed}
                 />
               )}
-            </div>
-
-            <div className={`lg:col-span-4 ${mobileTab === 'canvas' ? 'hidden lg:block' : 'block'}`}>
-              <DistrictSidebar
-                selectedBuilding={selectedBuilding}
-                selectedEdge={selectedEdge}
-                activePath={diffView === 'base' ? baseActivePath : activePath}
-                metrics={metrics}
-                baseStamp={baseStamp}
-                onFixBase={handleFixBase}
-                onRollbackToBase={handleRollbackToBase}
-              />
             </div>
           </div>
         </main>

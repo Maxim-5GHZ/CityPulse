@@ -15,9 +15,8 @@ import RoiSimulator from '@/components/pitch/RoiSimulator';
 const SITE_URL = 'https://hotcodeband.ru';
 const GITHUB_URL = 'https://github.com/Maxim-5GHZ/CityPulse';
 
-// Усилено стекло для стартовой карточки (bg-white/60) для лучшего контраста
 const cardCls =
-  'w-full max-w-xl rounded-[32px] border border-white/60 bg-white/60 px-6 py-6 backdrop-blur-2xl ' +
+  'w-full max-w-xl rounded-[32px] border border-white/60 bg-white/50 px-6 py-6 backdrop-blur-2xl ' +
   'backdrop-saturate-200 md:px-8 ' +
   'shadow-[inset_1px_1px_2px_rgba(255,255,255,0.9),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_24px_60px_-16px_rgba(20,26,38,0.35)] ' +
   'dark:border-white/20 dark:bg-gray-900/60';
@@ -81,6 +80,8 @@ export default function PresentationPage() {
   const containerRef = useRef<HTMLElement>(null);
   const touchStartY = useRef<number>(0);
   const lastScrollTime = useRef<number>(0);
+  const sectionRef = useRef<HTMLElement>(null);
+  const glowRef = useRef<HTMLDivElement>(null);
 
   const loginHref = token ? '/workspace' : '/login';
   const loginLabel = token ? 'В интерфейс' : 'Войти';
@@ -95,7 +96,6 @@ export default function PresentationPage() {
     setTimeout(() => { setIsTransitioning(false); }, 600);
   }, [currentSlide, isTransitioning]);
 
-  // ДОМЕННАЯ ОБЛАСТЬ: заголовки и тексты про 15-минутный город и доступность инфраструктуры
   const slides: Slide[] = [
     {
       id: 'hero',
@@ -104,9 +104,10 @@ export default function PresentationPage() {
       subtitle:
         'Интерактивный САПР: посадка корпусов, анализ инсоляции и мгновенный расчет обеспеченности жителей транспортом (M1), школами, парками и больницами (M2).',
       content: (
-        <div className={`${cardCls} flex flex-col items-center gap-4`}>
+        <div className={`${cardCls} relative flex flex-col items-center gap-4 overflow-hidden`}>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/80 dark:bg-white/20" />
+          <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-16 bg-[radial-gradient(80%_100%_at_50%_0%,rgba(255,255,255,0.35),transparent)] dark:bg-[radial-gradient(80%_100%_at_50%_0%,rgba(148,163,184,0.15),transparent)]" />
           <div className="mx-auto flex w-full justify-center">
-            {/* Русское название шире: скейл сбавлен, чтобы влезало без скролла */}
             <PulseLogo as="span" size="lg" className="scale-110 my-2 sm:scale-[1.4] sm:my-4" />
           </div>
           <QrRow />
@@ -167,6 +168,30 @@ export default function PresentationPage() {
   const nextSlide = useCallback(() => { goToSlide(currentSlide + 1); }, [currentSlide, goToSlide]);
   const prevSlide = useCallback(() => { goToSlide(currentSlide - 1); }, [currentSlide, goToSlide]);
 
+  // Лёгкий параллакс фона и светового пятна за мышью (без кейфреймов, rAF + cleanup).
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const el = sectionRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onMove = (e: MouseEvent) => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const nx = e.clientX / window.innerWidth - 0.5;
+        const ny = e.clientY / window.innerHeight - 0.5;
+        el.style.backgroundPosition = `${50 + nx * 4}% ${50 + ny * 4}%`;
+        if (glowRef.current) {
+          glowRef.current.style.transform = `translate3d(${nx * 14}px, ${ny * 10}px, 0)`;
+        }
+      });
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
   useEffect(() => {
     const handleWheel = (e: WheelEvent) => {
       const el = containerRef.current;
@@ -224,17 +249,26 @@ export default function PresentationPage() {
 
   return (
     <section
+      ref={sectionRef}
       className="relative h-screen w-screen overflow-hidden bg-cover bg-center"
       style={{ backgroundImage: "url('/city.png')" }}
     >
-      {/*
-        УСИЛЕНИЕ КОНТРАСТА:
-        1. Вуаль стала плотнее в центре (via-white/40 вместо 10), чтобы текст на фоне неба не терялся.
-        2. В тёмной теме также усилено затемнение (via-black/70).
-      */}
+      {/* Ослабленная вуаль — фото дышит, стекло читается */}
       <div
         aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/40 to-white/70 dark:from-black/80 dark:via-black/70 dark:to-black/90"
+        className="absolute inset-0 bg-gradient-to-b from-white/60 via-white/40 to-white/70 dark:from-black/80 dark:via-black/70 dark:to-black/90 z-0"
+      />
+      {/* Мягкое световое пятно сверху (белое/слейт, не неон) */}
+      <div
+        ref={glowRef}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 bg-[radial-gradient(60%_50%_at_50%_0%,rgba(255,255,255,0.5),transparent)] dark:bg-[radial-gradient(60%_50%_at_50%_0%,rgba(148,163,184,0.15),transparent)] will-change-transform"
+      />
+      {/* Архитектурная сетка — чуть заметнее, цвет задан через currentColor */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0 text-slate-800 opacity-[0.06] mix-blend-multiply dark:text-white dark:opacity-[0.08] dark:mix-blend-screen"
+        style={{ backgroundImage: 'radial-gradient(currentColor 1px, transparent 1px)', backgroundSize: '24px 24px' }}
       />
 
       <header className="absolute inset-x-0 top-0 z-30 flex h-16 items-center justify-between gap-2 px-4 sm:px-10">
@@ -248,7 +282,8 @@ export default function PresentationPage() {
           <PulseLogo as="span" size="lg" />
         </button>
 
-        <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-2 lg:flex">
+        {/* Телеметрические штрихи с живым пульсом активного */}
+        <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 lg:flex">
           {slides.map((s, idx) => (
             <button
               key={s.id}
@@ -257,10 +292,10 @@ export default function PresentationPage() {
               aria-label={`Слайд ${idx + 1}: ${s.title}`}
               aria-current={idx === currentSlide ? 'true' : undefined}
               title={`Слайд ${idx + 1}: ${s.title}`}
-              className={`h-1.5 rounded-full transition-all duration-500 ${
+              className={`h-[4px] rounded-full transition-all duration-500 ease-out ${
                 idx === currentSlide
-                  ? 'w-8 bg-gray-900 dark:bg-white'
-                  : 'w-2 bg-gray-400 hover:bg-gray-600 dark:bg-white/40 dark:hover:bg-white/80'
+                  ? 'w-12 bg-blue-600 shadow-[0_0_12px_rgba(37,99,235,0.35)] motion-safe:animate-pulse dark:bg-blue-500'
+                  : 'w-6 bg-gray-400/50 hover:bg-gray-600 dark:bg-white/30 dark:hover:bg-white/70'
               }`}
             />
           ))}
@@ -273,21 +308,29 @@ export default function PresentationPage() {
       </header>
 
       <main ref={containerRef} className="relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col items-center overflow-y-auto px-6 pb-14 pt-20 [scrollbar-width:none] sm:px-12 [&::-webkit-scrollbar]:hidden">
+        {/* Смена слайда — fade-in, каскад внутри — sheet-up (оба уже есть в конфиге) */}
         <div key={current.id} className="flex w-full m-auto flex-col items-center motion-safe:animate-fade-in">
-          <p className="shrink-0 mb-3 rounded-full border border-gray-400/30 bg-white/60 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-gray-800 backdrop-blur-xl dark:border-white/20 dark:bg-black/40 dark:text-gray-200">
+
+          <p className="mb-3 inline-flex shrink-0 items-center gap-2 rounded-full border border-gray-400/30 bg-white/60 px-4 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-gray-800 backdrop-blur-xl dark:border-white/20 dark:bg-black/40 dark:text-gray-300 motion-safe:animate-sheet-up [animation-fill-mode:both]">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-blue-600 motion-safe:animate-pulse dark:bg-blue-500" />
             {current.badge}
           </p>
 
-          <h1 className="shrink-0 mb-3 max-w-5xl text-center text-2xl font-black leading-[1.15] tracking-tight text-gray-900 drop-shadow-[0_2px_24px_rgba(255,255,255,1)] sm:text-4xl lg:text-[44px] dark:text-white dark:drop-shadow-[0_2px_24px_rgba(0,0,0,1)]">
-            {current.title}
+          <h1 className="mb-3 max-w-5xl shrink-0 text-center text-2xl font-black leading-[1.15] tracking-tight sm:text-4xl lg:text-[44px] motion-safe:animate-sheet-up [animation-delay:80ms] [animation-fill-mode:both] [text-shadow:0_1px_0_rgba(255,255,255,0.7)] dark:[text-shadow:0_1px_0_rgba(0,0,0,0.6)]">
+            {/* Глубокий металлик сверху вниз */}
+            <span className="bg-gradient-to-b from-gray-950 via-gray-800 to-gray-500 bg-clip-text text-transparent dark:from-white dark:via-gray-200 dark:to-gray-400">
+              {current.title}
+            </span>
           </h1>
 
-          {/* Полупрозрачная подложка-пилюля для подзаголовка, чтобы текст гарантированно читался */}
-          <div className="shrink-0 mb-5 max-w-4xl text-center text-sm font-semibold leading-relaxed text-gray-800 sm:text-base dark:text-gray-100 bg-white/50 dark:bg-black/50 px-5 py-2.5 rounded-3xl backdrop-blur-md border border-white/40 dark:border-white/10 shadow-sm">
+          <div className="relative mb-6 max-w-4xl shrink-0 overflow-hidden rounded-2xl border border-white/40 bg-white/40 px-6 py-3 text-center text-sm font-medium leading-relaxed text-gray-800 shadow-sm backdrop-blur-md sm:text-base dark:border-white/10 dark:bg-black/40 dark:text-gray-200 motion-safe:animate-sheet-up [animation-delay:160ms] [animation-fill-mode:both]">
+            <div aria-hidden="true" className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/80 dark:bg-white/20" />
             {current.subtitle}
           </div>
 
-          <div className="flex w-full shrink-0 justify-center">{current.content}</div>
+          <div className="flex w-full shrink-0 justify-center motion-safe:animate-sheet-up [animation-delay:240ms] [animation-fill-mode:both]">
+            {current.content}
+          </div>
         </div>
       </main>
 

@@ -20,11 +20,12 @@ import {
   Amenity,
   PathResult,
 } from '@/lib/city-engine/types';
+import ObjectInspectorCard from './ObjectInspectorCard';
 
 interface DeckCityViewProps {
   scenario: DistrictScenario;
   selectedBuildingId: string | null;
-  onSelectBuilding: (buildingId: string) => void;
+  onSelectBuilding: (buildingId: string | null) => void;
   activePathNodeIds: string[];
   edgeLoads: Record<string, number>;
   busPaths: Record<string, PathResult | null>;
@@ -669,6 +670,11 @@ export default function DeckCityView({
     () => new Map<string, GraphNode>(scenario.nodes.map((n) => [n.id, n])),
     [scenario.nodes],
   );
+
+  // Выбранный дом для углового попапа-инспектора (участки в 3D не выбираются).
+  const selectedBuilding = selectedBuildingId
+    ? scenario.buildings.find((b) => b.id === selectedBuildingId)
+    : undefined;
 
   // Генерация пула независимых пешеходов (вразнобой): каждый юнит —
   // автономный агент со своим именем, скоростью, фазой пути, направлением,
@@ -1514,6 +1520,29 @@ export default function DeckCityView({
           <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-white bg-blue-500" />по тропинке</span>
           <span><i className="mr-1 inline-block h-2 w-2 rounded-full border border-emerald-400 bg-emerald-500" />по траве и полям</span>
         </div>
+        {/* Угловой попап-инспектор выбранного дома (в 3D без якоря к объекту) */}
+        {selectedBuilding && (
+          <div className="pointer-events-none absolute left-3 top-3 z-10">
+            <ObjectInspectorCard
+              title={`Объект: ${selectedBuilding.name}`}
+              rows={[
+                { label: 'Этажность:', value: `${selectedBuilding.floors} эт.` },
+                { label: 'Жителей:', value: `${selectedBuilding.residents} чел.` },
+                {
+                  label: 'Тег:',
+                  value: selectedBuilding.tag ? BUILDING_TAG_LABEL[selectedBuilding.tag] : 'Жилой',
+                },
+              ]}
+              pathBox={
+                busPaths[selectedBuilding.id]
+                  ? `Кратчайший путь: ${busPaths[selectedBuilding.id]?.distanceM} м (~${busPaths[selectedBuilding.id]?.timeMinutes} мин)`
+                  : null
+              }
+              hint="Теги и снос — в 2D-чертеже (ПКМ по дому)."
+              onClose={() => onSelectBuilding(null)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

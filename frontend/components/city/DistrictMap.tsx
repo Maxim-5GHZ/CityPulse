@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL, PathResult } from '@/lib/city-engine/types';
 import { CITY_DEFAULTS } from '@/lib/city-engine/metrics';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
@@ -8,6 +8,7 @@ import { buildAdjacency, findShortestPath } from '@/lib/city-engine/dijkstra';
 import DistrictContextMenu from './DistrictContextMenu';
 import BuildingContextMenu from './BuildingContextMenu';
 import RouteContextMenu from './RouteContextMenu';
+import ObjectInspectorCard from './ObjectInspectorCard';
 import { pointsToSmoothSvgPath } from '@/lib/city-engine/geometry';
 
 export type ToolMode =
@@ -276,22 +277,47 @@ export default function DistrictMap({
   const scaledH = baseView.h / zoom;
   const viewBoxStr = `${baseView.x + pan.x} ${baseView.y + pan.y} ${scaledW} ${scaledH}`;
 
+  // Meet-fit: viewBox может не заполнять элемент целиком (min-height SVG на
+  // узких экранах) — SVG центрирует чертёж, по краям остаются поля. Считаем
+  // реальный масштаб и сдвиги контента, иначе все клики мимо (до ~200 м).
+  const getViewFit = useCallback(
+    (rect: { width: number; height: number }) => {
+      const scale = Math.min(rect.width / scaledW, rect.height / scaledH);
+      const ox = (rect.width - scaledW * scale) / 2;
+      const oy = (rect.height - scaledH * scale) / 2;
+      return { scale, ox, oy };
+    },
+    [scaledW, scaledH],
+  );
+
   // Мировые координаты без снапа (для drag и панорамы).
   const toWorldRaw = (clientX: number, clientY: number): { x: number; y: number } => {
     const svg = svgRef.current;
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
+    const { scale, ox, oy } = getViewFit(rect);
     return {
-      x: baseView.x + pan.x + ((clientX - rect.left) / rect.width) * scaledW,
-      y: baseView.y + pan.y + ((clientY - rect.top) / rect.height) * scaledH,
+      x: baseView.x + pan.x + (clientX - rect.left - ox) / scale,
+      y: baseView.y + pan.y + (clientY - rect.top - oy) / scale,
+    };
+  };
+
+  // Обратное преобразование: мировая точка → доли элемента (0..1) для оверлеев.
+  const worldToFraction = (wx: number, wy: number): { fx: number; fy: number } | null => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const rect = svg.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
+    const { scale, ox, oy } = getViewFit(rect);
+    return {
+      fx: (ox + (wx - baseView.x - pan.x) * scale) / rect.width,
+      fy: (oy + (wy - baseView.y - pan.y) * scale) / rect.height,
     };
   };
 
   const getSvgCoordinates = (e: ReactMouseEvent<SVGSVGElement>): { x: number; y: number } => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = baseView.x + pan.x + ((e.clientX - rect.left) / rect.width) * scaledW;
-    const y = baseView.y + pan.y + ((e.clientY - rect.top) / rect.height) * scaledH;
-    return snapToNode(x, y);
+    const w = toWorldRaw(e.clientX, e.clientY);
+    return snapToNode(w.x, w.y);
   };
 
   // Старт drag объекта (только select, левая кнопка, не кольцо).
@@ -383,31 +409,86 @@ export default function DistrictMap({
 
   // Зум колесом мыши с фокусом на курсор (карта не «улетает» при скролле).
   // Native-слушатель: React onWheel пассивный и preventDefault там не сработает.
+  // Дельты копятся и применяются раз за кадр — иначе резкий скролл кладёт
+  // десятки полных ре-рендеров SVG в секунду и карта лагает.
+  const wheelRef = useRef<{ dx: number; dy: number; cx: number; cy: number } | null>(null);
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault(); // гасим скролл страницы над картой
+    let raf = 0;
+    const applyZoom = () => {
+      raf = 0;
+      const acc = wheelRef.current;
+      wheelRef.current = null;
+      if (!acc) return;
       const rect = svg.getBoundingClientRect();
       const { zoom: z, pan: p } = viewStateRef.current;
+      // Meet-fit: точка под курсором в мировых координатах (с учётом полей).
+      const { scale, ox, oy } = getViewFit(rect);
+      const worldX = baseView.x + p.x + (acc.cx - rect.left - ox) / scale;
+      const worldY = baseView.y + p.y + (acc.cy - rect.top - oy) / scale;
 
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-      const worldX = baseView.x + p.x + (mouseX / rect.width) * (baseView.w / z);
-      const worldY = baseView.y + p.y + (mouseY / rect.height) * (baseView.h / z);
-
-      const dz = Math.exp(-e.deltaY * 0.002);
+      const dz = Math.exp(-acc.dy * 0.002);
       const newZoom = Math.max(0.2, Math.min(6, z * dz));
 
-      const newPanX = worldX - baseView.x - (mouseX / rect.width) * (baseView.w / newZoom);
-      const newPanY = worldY - baseView.y - (mouseY / rect.height) * (baseView.h / newZoom);
+      const newScale = scale * (newZoom / z);
+      const newPanX = worldX - baseView.x - (acc.cx - rect.left - ox) / newScale;
+      const newPanY = worldY - baseView.y - (acc.cy - rect.top - oy) / newScale;
 
       setZoom(newZoom);
       setPan({ x: newPanX, y: newPanY });
     };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); // гасим скролл страницы над картой
+      const prev = wheelRef.current;
+      wheelRef.current = {
+        dx: (prev?.dx ?? 0) + e.deltaX,
+        dy: (prev?.dy ?? 0) + e.deltaY,
+        cx: e.clientX,
+        cy: e.clientY,
+      };
+      if (!raf) raf = requestAnimationFrame(applyZoom);
+    };
     svg.addEventListener('wheel', onWheel, { passive: false });
-    return () => svg.removeEventListener('wheel', onWheel);
-  }, [baseView.x, baseView.y, baseView.w, baseView.h]);
+    return () => {
+      svg.removeEventListener('wheel', onWheel);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [baseView.x, baseView.y, baseView.w, baseView.h, getViewFit]);
+
+  // Автопан при трассировке дороги за край холста: пока тянем линию
+  // (roadStart активен), вид медленно ползёт за курсором. Скорость низкая
+  // (~150 м/с), чтобы наблюдатель не улетал. Работает и с тачем.
+  const cursorRef = useRef<{ cx: number; cy: number; t: number } | null>(null);
+  useEffect(() => {
+    if (!roadStart) return;
+    const onMove = (e: PointerEvent) => {
+      cursorRef.current = { cx: e.clientX, cy: e.clientY, t: Date.now() };
+    };
+    window.addEventListener('pointermove', onMove);
+    let raf = 0;
+    const EDGE_PX = 28; // полоса у края, где начинается автопан
+    const STEP_M = 2.5; // шаг за кадр (мировые метры) — медленно
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const svg = svgRef.current;
+      const cur = cursorRef.current;
+      if (!svg || !cur || Date.now() - cur.t > 500) return; // курсор стоит — стоим
+      const rect = svg.getBoundingClientRect();
+      let dx = 0;
+      let dy = 0;
+      if (cur.cx < rect.left + EDGE_PX) dx = -STEP_M;
+      else if (cur.cx > rect.right - EDGE_PX) dx = STEP_M;
+      if (cur.cy < rect.top + EDGE_PX) dy = -STEP_M;
+      else if (cur.cy > rect.bottom - EDGE_PX) dy = STEP_M;
+      if (dx !== 0 || dy !== 0) setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      cancelAnimationFrame(raf);
+    };
+  }, [roadStart]);
 
   // Escape + pointerup на уровне окна: отмена/коммит drag и панорамы даже вне svg.
   // Клик/тап вне меню закрывает его (само меню помечено data-ctx-menu).
@@ -730,6 +811,81 @@ export default function DistrictMap({
       ? scenario.buildings.find((b) => b.id === contextMenu.buildingId)
       : undefined;
 
+  // Ресайз окна: позиция попапа читается из геометрии элемента при рендере.
+  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    window.addEventListener('resize', forceUpdate);
+    return () => window.removeEventListener('resize', forceUpdate);
+  }, []);
+
+  // Плавающий инспектор: якорь — центроид дома / середина участка,
+  // позиция — доля элемента SVG (пересчёт при каждом рендере: зум/пан/ресайз).
+  const inspector = useMemo(() => {
+    const selBuilding = selectedBuildingId
+      ? scenario.buildings.find((b) => b.id === selectedBuildingId)
+      : undefined;
+    if (selBuilding) {
+      const poly = selBuilding.polygon;
+      const ax =
+        poly && poly.length >= 3
+          ? poly.reduce((s, p) => s + p.x, 0) / poly.length
+          : selBuilding.x + selBuilding.width / 2;
+      const ay =
+        poly && poly.length >= 3
+          ? poly.reduce((s, p) => s + p.y, 0) / poly.length
+          : selBuilding.y + selBuilding.height / 2;
+      const pos = worldToFraction(ax, ay);
+      if (!pos) return null;
+      const path = busPaths[selBuilding.id];
+      return {
+        pos,
+        flip: pos.fy < 0.35,
+        title: `Объект: ${selBuilding.name}`,
+        titleCls: 'text-blue-700 dark:text-blue-300',
+        rows: [
+          { label: 'Этажность:', value: `${selBuilding.floors} эт.` },
+          { label: 'Жителей:', value: `${selBuilding.residents} чел.` },
+          { label: 'Тег:', value: selBuilding.tag ? BUILDING_TAG_LABEL[selBuilding.tag] : 'Жилой' },
+        ],
+        pathBox: path ? `Кратчайший путь: ${path.distanceM} м (~${path.timeMinutes} мин)` : null,
+        hint: 'ПКМ по дому — сменить тег или снести.',
+        onClose: () => onSelectBuilding(null),
+      };
+    }
+    const selEdge = selectedEdgeId ? scenario.edges.find((e) => e.id === selectedEdgeId) : undefined;
+    if (selEdge) {
+      const from = nodeMap.get(selEdge.from);
+      const to = nodeMap.get(selEdge.to);
+      if (!from || !to) return null;
+      const pos = worldToFraction((from.x + to.x) / 2, (from.y + to.y) / 2);
+      if (!pos) return null;
+      const sidewalks =
+        `${selEdge.hasSidewalkLeft ? 'Слева ' : ''}${selEdge.hasSidewalkRight ? 'Справа' : ''}`.trim() || 'Нет';
+      return {
+        pos,
+        flip: pos.fy < 0.35,
+        title: `Участок: ${selEdge.type}`,
+        titleCls: 'text-amber-700 dark:text-amber-300',
+        rows: [
+          { label: 'Длина:', value: `${selEdge.lengthM} м` },
+          { label: 'Полосы авто:', value: `${selEdge.lanes ?? '—'}` },
+          { label: 'Тротуары:', value: sidewalks },
+          {
+            label: 'Пассажиропоток:',
+            value: `${edgeLoads[selEdge.id] || 0} чел/час`,
+            valueCls: 'text-emerald-600 dark:text-emerald-400',
+          },
+        ],
+        pathBox: null,
+        hint: undefined,
+        onClose: () => onSelectEdge(null),
+      };
+    }
+    return null;
+    // worldToFraction читает свежий DOM при каждом вызове — в deps не нужен.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenario, selectedBuildingId, selectedEdgeId, busPaths, edgeLoads, nodeMap, pan, zoom, baseView]);
+
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-[#1e2430] shadow-xl">
       <div className="flex h-8 items-center justify-between border-b border-gray-700/80 bg-[#161a22] px-3 font-mono text-[11px] text-gray-300 select-none">
@@ -760,11 +916,14 @@ export default function DistrictMap({
         </div>
       </div>
 
+      {/* Холст + плавающий инспектор объекта: обёртка tight вокруг svg,
+          чтобы оверлей-попап позиционировался ровно по элементу. */}
+      <div className="relative">
       <svg
         ref={svgRef}
         viewBox={viewBoxStr}
-        className="h-auto w-full select-none"
-        style={{ minHeight: '520px', cursor: readOnly ? 'default' : toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
+        className="block h-auto w-full select-none"
+        style={{ minHeight: '520px', background: '#141822', cursor: readOnly ? 'default' : toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
         onClick={handleSvgClick}
         onContextMenu={handleSvgContextMenu}
         onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
@@ -1517,6 +1676,32 @@ export default function DistrictMap({
           );
         })}
       </svg>
+
+      {/* Плавающий инспектор объекта: всплывает у дома/участка, а не висит
+          статичной колонкой справа. Позиция — доля элемента, кламп к краям;
+          у верхней кромки карточка переворачивается вниз. */}
+      {inspector && (
+        <div className="pointer-events-none absolute inset-0 z-10">
+          <div
+            className="absolute"
+            style={{
+              left: `${Math.min(0.82, Math.max(0.18, inspector.pos.fx)) * 100}%`,
+              top: `${Math.min(0.92, Math.max(0.08, inspector.pos.fy)) * 100}%`,
+              transform: inspector.flip ? 'translate(-50%, 12px)' : 'translate(-50%, calc(-100% - 12px))',
+            }}
+          >
+            <ObjectInspectorCard
+              title={inspector.title}
+              titleCls={inspector.titleCls}
+              rows={inspector.rows}
+              pathBox={inspector.pathBox}
+              hint={inspector.hint}
+              onClose={inspector.onClose}
+            />
+          </div>
+        </div>
+      )}
+      </div>
 
       {/* Hover-инфоплашка: параметры точки притяжения под курсором */}
       {hoveredEntity && (
