@@ -49,12 +49,7 @@ const qrLinkCls =
 function QrRow() {
   return (
     <div className="flex flex-col items-center gap-4 sm:flex-row">
-      <figure className="flex flex-col items-center gap-2">
-        <a href={SITE_URL} target="_blank" rel="noopener noreferrer" aria-label="Наш Сайт" className={qrLinkCls}>
-          <QRCode value={SITE_URL} size={180} />
-        </a>
-        <figcaption className="text-sm font-bold text-gray-800 dark:text-gray-100">Наш Сайт</figcaption>
-      </figure>
+      
       <figure className="flex flex-col items-center gap-2">
         <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" aria-label="Наш GitHub" className={qrLinkCls}>
           <QRCode value={GITHUB_URL} size={180} />

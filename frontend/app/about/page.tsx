@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import QRCode from 'react-qr-code';
 import PulseLogo from '@/components/PulseLogo';
 
@@ -61,6 +62,14 @@ export default function AboutPage() {
               <div className="mx-auto flex justify-center">
                 <PulseLogo as="span" size="lg" className="scale-110 sm:scale-125 my-2" />
               </div>
+
+              <Image
+                src="/newlogo.svg"
+                alt="Новый логотип"
+                width={1092}
+                height={225}
+                className="h-auto w-full max-w-md dark:invert"
+              />
 
               <h1 className="text-center text-2xl font-black tracking-tight text-gray-900 dark:text-gray-100">
                 Контакты
