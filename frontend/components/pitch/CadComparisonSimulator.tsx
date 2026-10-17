@@ -92,10 +92,10 @@ export default function CadComparisonSimulator() {
           <div className="grid h-full grid-cols-1 gap-4 sm:grid-cols-2">
             <div className={`flex flex-col justify-between rounded-2xl border p-5 backdrop-blur-md ${current.traditional.bg}`}>
               <div>
-                <span className="text-[11px] font-black uppercase tracking-wider text-gray-600 dark:text-gray-400">
+                <span className="text-balance text-[11px] font-black uppercase leading-snug tracking-wider text-gray-600 dark:text-gray-400">
                   Традиционные ГИС
                 </span>
-                <div className={`mt-2 break-words text-xl font-black tracking-tight sm:text-2xl ${current.traditional.tone}`}>
+                <div lang="ru" className={`mt-2 hyphens-auto break-words text-lg font-black leading-tight tracking-tight sm:text-xl ${current.traditional.tone}`}>
                   {current.traditional.status}
                 </div>
               </div>
@@ -106,10 +106,10 @@ export default function CadComparisonSimulator() {
 
             <div className={`flex flex-col justify-between rounded-2xl border p-5 backdrop-blur-md ${current.citypulse.bg}`}>
               <div>
-                <span className="text-[11px] font-black uppercase tracking-wider text-blue-800 dark:text-blue-300">
+                <span className="text-balance text-[11px] font-black uppercase leading-snug tracking-wider text-blue-800 dark:text-blue-300">
                   Скоростной САПР «Пульса Города»
                 </span>
-                <div className={`mt-2 break-words text-xl font-black tracking-tight sm:text-2xl ${current.citypulse.tone}`}>
+                <div lang="ru" className={`mt-2 hyphens-auto break-words text-lg font-black leading-tight tracking-tight sm:text-xl ${current.citypulse.tone}`}>
                   {current.citypulse.status}
                 </div>
               </div>

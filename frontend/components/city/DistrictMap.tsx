@@ -4,10 +4,8 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Mou
 import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL, PathResult } from '@/lib/city-engine/types';
 import { CITY_DEFAULTS } from '@/lib/city-engine/metrics';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
-import { buildAdjacency, findShortestPath } from '@/lib/city-engine/dijkstra';
 import DistrictContextMenu from './DistrictContextMenu';
 import BuildingContextMenu from './BuildingContextMenu';
-import RouteContextMenu from './RouteContextMenu';
 import ObjectInspectorCard from './ObjectInspectorCard';
 import { pointsToSmoothSvgPath } from '@/lib/city-engine/geometry';
 
@@ -146,12 +144,11 @@ export default function DistrictMap({
   // ПКМ-меню: у дома и дороги разный набор. wx/wy — мировая точка клика
   // (нужна остановке для разреза ребра строго в месте клика).
   const [contextMenu, setContextMenu] = useState<{
-    kind: 'edge' | 'building' | 'map';
+    kind: 'edge' | 'building';
     x: number;
     y: number;
     edgeId?: string;
     buildingId?: string;
-    nodeId?: string;
     wx: number;
     wy: number;
   } | null>(null);
@@ -625,64 +622,6 @@ export default function DistrictMap({
     openBuildingMenu(e.clientX, e.clientY, buildingId);
   };
 
-  // Радиус снапа ПКМ-точки маршрута к ближайшему узлу графа (м).
-  const ROUTE_SNAP_M = 50;
-
-  // ПКМ по фону карты: точка маршрута А/Б на ближайшем узле в радиусе снапа.
-  // Маршрут сценарий не мутирует (только оверлей), поэтому доступен и в «Дифф».
-  // В «Было» меню нет: 3D всегда показывает current, точки обязаны быть из него.
-  const handleSvgContextMenu = (e: ReactMouseEvent<SVGSVGElement>) => {
-    if (diffView === 'base') return;
-    e.preventDefault();
-    const w = toWorldRaw(e.clientX, e.clientY);
-    let best: GraphNode | null = null;
-    let bestDist = ROUTE_SNAP_M;
-    for (const n of scenario.nodes) {
-      const d = Math.hypot(n.x - w.x, n.y - w.y);
-      if (d <= bestDist) {
-        bestDist = d;
-        best = n;
-      }
-    }
-    if (!best) {
-      onNotify?.('Рядом нет узла графа — кликните ближе к дороге');
-      return;
-    }
-    setContextMenu({
-      kind: 'map',
-      x: e.clientX,
-      y: e.clientY,
-      nodeId: best.id,
-      wx: Math.round(w.x),
-      wy: Math.round(w.y),
-    });
-  };
-
-  // Точка А: только фиксируем старт, путь появится после точки Б.
-  const setRouteStart = (nodeId: string) => {
-    onRouteChange({ startId: nodeId, pathNodeIds: [] });
-    onNotify?.('Точка А поставлена — кликните ПКМ для точки Б');
-  };
-
-  // Точка Б: считаем умным Дейкстрой от зафиксированной точки А.
-  const setRouteEnd = (nodeId: string) => {
-    const startId = route?.startId;
-    if (!startId) return;
-    if (startId === nodeId) {
-      onRouteChange(null);
-      onNotify?.('Точки совпали — маршрут сброшен');
-      return;
-    }
-    const adj = buildAdjacency(scenario.nodes, scenario.edges);
-    const path = findShortestPath(startId, nodeId, adj);
-    if (!path) {
-      onNotify?.('Маршрут не найден: граф несвязен');
-      return;
-    }
-    onRouteChange({ startId, pathNodeIds: path.pathNodeIds });
-    onNotify?.(`Маршрут: ${path.distanceM} м, ~${path.timeMinutes} мин пешком`);
-  };
-
   const handleEdgeClick = (
     e: ReactMouseEvent,
     edge: GraphEdge,
@@ -925,7 +864,6 @@ export default function DistrictMap({
         className="block h-auto w-full select-none"
         style={{ minHeight: '520px', background: '#141822', cursor: readOnly ? 'default' : toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
         onClick={handleSvgClick}
-        onContextMenu={handleSvgContextMenu}
         onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
         onPointerDown={handleSvgPointerDown}
         onPointerMove={handleSvgPointerMove}
@@ -1668,7 +1606,7 @@ export default function DistrictMap({
               >
                 {canRing && <title>Клик — построить кольцо</title>}
               </circle>
-              {/* Пульсирующий маркер точки А (маршрут ставится через ПКМ) */}
+              {/* Пульсирующий маркер точки А (ставится через ПКМ в 3D) */}
               {routeStartId === node.id && (
                 <circle cx={rendered.x} cy={rendered.y} r={12} fill="none" stroke="#a855f7" strokeWidth={2} className="motion-safe:animate-ping" />
               )}
@@ -1780,20 +1718,6 @@ export default function DistrictMap({
           onDeleteBuilding={() => {
             onDeleteBuilding(menuBuilding.id);
           }}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
-
-      {contextMenu?.kind === 'map' && contextMenu.nodeId && (
-        <RouteContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          nodeLabel={`узел ${contextMenu.wx}, ${contextMenu.wy}`}
-          hasStart={!!route?.startId}
-          hasRoute={!!routePath}
-          onSetStart={() => setRouteStart(contextMenu.nodeId as string)}
-          onSetEnd={() => setRouteEnd(contextMenu.nodeId as string)}
-          onClear={() => onRouteChange(null)}
           onClose={() => setContextMenu(null)}
         />
       )}

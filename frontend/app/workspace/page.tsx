@@ -736,6 +736,9 @@ export default function WorkspacePage() {
                   schoolPaths={metrics.schoolPaths}
                   shopPaths={metrics.shopPaths}
                   routePathNodeIds={route?.pathNodeIds ?? []}
+                  route={route}
+                  onRouteChange={setRoute}
+                  onNotify={showHint}
                   simPlaying={simPlaying}
                   simSpeed={simSpeed}
                 />

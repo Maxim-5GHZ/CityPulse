@@ -1,14 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { DeckGL } from '@deck.gl/react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { DeckGL, type DeckGLRef } from '@deck.gl/react';
 import {
   OrbitView,
   LightingEffect,
   AmbientLight,
   DirectionalLight,
 } from '@deck.gl/core';
-import type { OrbitViewState, Deck } from '@deck.gl/core';
+import type { OrbitViewState } from '@deck.gl/core';
 import { PolygonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers';
 import {
   DistrictScenario,
@@ -21,6 +21,9 @@ import {
   PathResult,
 } from '@/lib/city-engine/types';
 import ObjectInspectorCard from './ObjectInspectorCard';
+import RouteContextMenu from './RouteContextMenu';
+import { snapNodeId, buildRouteAB } from '@/lib/city-engine/routeTool';
+import type { RouteSelection } from './DistrictMap';
 
 interface DeckCityViewProps {
   scenario: DistrictScenario;
@@ -32,8 +35,11 @@ interface DeckCityViewProps {
   parkPaths: Record<string, PathResult | null>;
   schoolPaths?: Record<string, PathResult | null>;
   shopPaths?: Record<string, PathResult | null>;
-  // Маршрут А → Б из ПКМ: когда задан — отдельная группа идёт строго по нему.
+  // Маршрут А → Б из ПКМ в 3D: когда задан — отдельная группа идёт строго по нему.
   routePathNodeIds?: string[];
+  route: RouteSelection | null;
+  onRouteChange: (route: RouteSelection | null) => void;
+  onNotify?: (text: string) => void;
   simPlaying?: boolean;
   simSpeed?: 1 | 2 | 5;
 }
@@ -663,6 +669,9 @@ export default function DeckCityView({
   schoolPaths = {},
   shopPaths = {},
   routePathNodeIds = [],
+  route,
+  onRouteChange,
+  onNotify,
   simPlaying = true,
   simSpeed = 1,
 }: DeckCityViewProps) {
@@ -675,6 +684,82 @@ export default function DeckCityView({
   const selectedBuilding = selectedBuildingId
     ? scenario.buildings.find((b) => b.id === selectedBuildingId)
     : undefined;
+
+  // Маршрут А → Б ставится только здесь, в 3D: ПКМ → unproject в мир →
+  // САПР-координаты → снап к узлу. В 2D маршрут только отображается.
+  const [routeMenu, setRouteMenu] = useState<{
+    x: number;
+    y: number;
+    nodeId: string;
+    label: string;
+  } | null>(null);
+  // Точка нажатия правой кнопки: если её протащили (>6px) — это панорама,
+  // а не клик, меню не открываем.
+  const deckDownPos = useRef<{ x: number; y: number } | null>(null);
+
+  const handleDeckContextMenu = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const down = deckDownPos.current;
+    deckDownPos.current = null;
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 6) return;
+    const deck = deckRef.current?.deck;
+    const canvas = deck?.getCanvas();
+    const vp = deck?.getViewports()[0];
+    if (!canvas || !vp) return;
+    const rect = canvas.getBoundingClientRect();
+    // unproject → мир Deck.gl (z=0, уровень земли) → обратно в САПР-метры.
+    const [wx, wy] = vp.unproject([e.clientX - rect.left, e.clientY - rect.top]);
+    const cadX = wx + 480;
+    const cadY = 320 - wy;
+    const nodeId = snapNodeId(scenario.nodes, cadX, cadY);
+    if (!nodeId) {
+      onNotify?.('Рядом нет узла графа — кликните ближе к дороге');
+      return;
+    }
+    setRouteMenu({ x: e.clientX, y: e.clientY, nodeId, label: `узел ${Math.round(cadX)}, ${Math.round(cadY)}` });
+  };
+
+  const setDeckRouteStart = (nodeId: string) => {
+    onRouteChange({ startId: nodeId, pathNodeIds: [] });
+    onNotify?.('Точка А поставлена — кликните ПКМ для точки Б');
+  };
+
+  const setDeckRouteEnd = (nodeId: string) => {
+    const startId = route?.startId;
+    if (!startId) return;
+    if (startId === nodeId) {
+      onRouteChange(null);
+      onNotify?.('Точки совпали — маршрут сброшен');
+      return;
+    }
+    const built = buildRouteAB(scenario.nodes, scenario.edges, startId, nodeId);
+    if (!built) {
+      onNotify?.('Маршрут не найден: граф несвязен');
+      return;
+    }
+    onRouteChange({ startId, pathNodeIds: built.pathNodeIds });
+    onNotify?.(`Маршрут: ${built.distanceM} м, ~${built.timeMinutes} мин пешком`);
+  };
+
+  // Закрытие меню маршрута: Escape + клик вне (меню помечено data-ctx-menu).
+  useEffect(() => {
+    if (!routeMenu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setRouteMenu(null);
+        onRouteChange(null);
+      }
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element).closest?.('[data-ctx-menu]')) setRouteMenu(null);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown);
+    };
+  }, [routeMenu, onRouteChange]);
 
   // Генерация пула независимых пешеходов (вразнобой): каждый юнит —
   // автономный агент со своим именем, скоростью, фазой пути, направлением,
@@ -1369,9 +1454,89 @@ export default function DeckCityView({
     selectedBuildingId,
   ]);
 
+  // Маршрут А → Б в 3D: явная линия + маркеры точек (иначе видны только
+  // пешеходы-агенты и кажется, что «точек нет»). Линия — по оси пути
+  // (sidePreference 0), поверх пешеходов; маркеры А/Б — крупные, с подписями.
+  const routeCoords = useMemo(
+    () =>
+      routePathNodeIds.length >= 2
+        ? buildPavedRoute(routePathNodeIds, scenario, nodeMap, 0, 0, Z_ACTIVE_PATH)
+        : [],
+    [routePathNodeIds, scenario, nodeMap],
+  );
+  const routeLayers = useMemo(() => {
+    const startNode = route?.startId ? nodeMap.get(route.startId) : undefined;
+    const endId =
+      routePathNodeIds.length >= 2 ? routePathNodeIds[routePathNodeIds.length - 1] : null;
+    const endNode = endId ? nodeMap.get(endId) : undefined;
+    const out = [];
+    if (routeCoords.length >= 2) {
+      out.push(
+        new PathLayer<{ path: Vec3[] }>({
+          id: 'route-ab-line',
+          data: [{ path: routeCoords }],
+          getPath: (d) => d.path,
+          getColor: [168, 85, 247, 255],
+          getWidth: ACTIVE_PATH_WIDTH,
+          widthMinPixels: 4,
+          capRounded: true,
+          jointRounded: true,
+          pickable: false,
+        }),
+      );
+    }
+    const markers: { position: Vec3; label: string; color: [number, number, number, number] }[] = [];
+    if (startNode) {
+      markers.push({
+        position: toWorld(startNode.x, startNode.y, Z_BUS_STOP),
+        label: 'А',
+        color: [168, 85, 247, 255],
+      });
+    }
+    if (endNode && endNode.id !== route?.startId) {
+      markers.push({
+        position: toWorld(endNode.x, endNode.y, Z_BUS_STOP),
+        label: 'Б',
+        color: [34, 197, 94, 255],
+      });
+    }
+    if (markers.length > 0) {
+      out.push(
+        new ScatterplotLayer<(typeof markers)[number]>({
+          id: 'route-ab-markers',
+          data: markers,
+          getPosition: (d) => d.position,
+          getRadius: 10,
+          radiusMinPixels: 10,
+          radiusMaxPixels: 22,
+          getFillColor: (d) => d.color,
+          getLineColor: [255, 255, 255, 255],
+          stroked: true,
+          lineWidthMinPixels: 2,
+          pickable: false,
+        }),
+        new TextLayer<(typeof markers)[number]>({
+          id: 'route-ab-labels',
+          data: markers,
+          getPosition: (d) => d.position,
+          getText: (d) => d.label,
+          getSize: 22,
+          sizeUnits: 'meters',
+          getColor: [255, 255, 255, 255],
+          fontFamily: 'Inter, system-ui, sans-serif',
+          characterSet: 'auto',
+          pickable: false,
+        }),
+      );
+    }
+    return out;
+  }, [routeCoords, route?.startId, routePathNodeIds, nodeMap]);
+
   // Доступ к Deck для форварда клика: пешеход pickable (тултип), но клик
   // сквозь него должен выбирать дом под курсором, а не глотаться.
-  const deckRef = useRef<Deck | null>(null);
+  // В deck.gl v9 ref <DeckGL> — это DeckGLRef (только pick*), настоящий
+  // Deck с getCanvas/getViewports лежит в поле .deck.
+  const deckRef = useRef<DeckGLRef | null>(null);
   const forwardBuildingClick = useCallback((x: number, y: number): void => {
     const pick = deckRef.current?.pickObject({
       x,
@@ -1422,8 +1587,8 @@ export default function DeckCityView({
   }, [displayAgents, forwardBuildingClick]);
 
   const layers = useMemo(
-    () => [...staticLayers, ...pedestrianLayers],
-    [staticLayers, pedestrianLayers],
+    () => [...staticLayers, ...routeLayers, ...pedestrianLayers],
+    [staticLayers, routeLayers, pedestrianLayers],
   );
 
   const pedestrianCount = displayAgents.length;
@@ -1445,6 +1610,10 @@ export default function DeckCityView({
         className="relative h-[560px] w-full cursor-grab active:cursor-grabbing"
         role="img"
         aria-label={ariaSummary}
+        onContextMenu={handleDeckContextMenu}
+        onPointerDown={(e) => {
+          if (e.button === 2) deckDownPos.current = { x: e.clientX, y: e.clientY };
+        }}
       >
         <p className="sr-only">{ariaSummary}</p>
         <DeckGL
@@ -1542,6 +1711,20 @@ export default function DeckCityView({
               onClose={() => onSelectBuilding(null)}
             />
           </div>
+        )}
+        {/* ПКМ-меню маршрута А → Б (ставится только в 3D) */}
+        {routeMenu && (
+          <RouteContextMenu
+            x={routeMenu.x}
+            y={routeMenu.y}
+            nodeLabel={routeMenu.label}
+            hasStart={!!route?.startId}
+            hasRoute={routePathNodeIds.length >= 2}
+            onSetStart={() => setDeckRouteStart(routeMenu.nodeId)}
+            onSetEnd={() => setDeckRouteEnd(routeMenu.nodeId)}
+            onClear={() => onRouteChange(null)}
+            onClose={() => setRouteMenu(null)}
+          />
         )}
       </div>
     </div>

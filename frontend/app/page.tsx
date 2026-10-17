@@ -316,9 +316,9 @@ export default function PresentationPage() {
             {current.badge}
           </p>
 
-          <h1 className="mb-3 max-w-5xl shrink-0 text-center text-2xl font-black leading-[1.15] tracking-tight sm:text-4xl lg:text-[44px] motion-safe:animate-sheet-up [animation-delay:80ms] [animation-fill-mode:both] [text-shadow:0_1px_0_rgba(255,255,255,0.7)] dark:[text-shadow:0_1px_0_rgba(0,0,0,0.6)]">
-            {/* Глубокий металлик сверху вниз */}
-            <span className="bg-gradient-to-b from-gray-950 via-gray-800 to-gray-500 bg-clip-text text-transparent dark:from-white dark:via-gray-200 dark:to-gray-400">
+          <h1 className="mb-3 max-w-5xl shrink-0 text-center text-2xl font-black leading-[1.15] tracking-tight sm:text-4xl lg:text-[44px] motion-safe:animate-sheet-up [animation-delay:80ms] [animation-fill-mode:both]">
+            {/* Приглушённый стальной металлик: тёмный верх для контраста на небе, светлый низ для объёма */}
+            <span className="bg-gradient-to-b from-gray-900 via-gray-700 to-gray-600 bg-clip-text text-transparent drop-shadow-[0_2px_16px_rgba(255,255,255,0.9)] dark:from-gray-100 dark:via-gray-300 dark:to-gray-400 dark:drop-shadow-[0_2px_16px_rgba(0,0,0,0.8)]">
               {current.title}
             </span>
           </h1>
