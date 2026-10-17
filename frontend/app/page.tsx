@@ -100,9 +100,9 @@ export default function PresentationPage() {
     {
       id: 'hero',
       badge: 'КЕЙС 03: ОБНИНСК 2040',
-      title: 'Конструктор 15-минутного города и аудит среды',
+      title: 'Конструктор жилой инфраструктуры',
       subtitle:
-        'Интерактивный САПР: посадка корпусов, анализ инсоляции и мгновенный расчет обеспеченности жителей транспортом (M1), школами, парками и больницами (M2).',
+        'Аналитика градостроительных и архитектурных решений',
       content: (
         <div className={`${cardCls} relative flex flex-col items-center gap-4 overflow-hidden`}>
           <div aria-hidden="true" className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/80 dark:bg-white/20" />
@@ -121,9 +121,9 @@ export default function PresentationPage() {
     {
       id: 'comparison',
       badge: 'Доступность инфраструктуры',
-      title: 'Тяжёлые ГИС против «Пульса Города»',
+      title: 'Сложные ГИС против «Пульса Города»',
       subtitle:
-        'Расчёт обеспеченности объектами социокульта обычно занимает недели. «Пульс Города» автоматически пересчитывает изохроны и охват жителей при каждом клике прямо в браузере.',
+        'Конструктор ускоряет аналитику: больше гипотез за то же время.',
       content: <CadComparisonSimulator />,
     },
     {
@@ -131,7 +131,7 @@ export default function PresentationPage() {
       badge: 'Скрытая математика',
       title: 'От графа УДС к «народным тропам» в 3D',
       subtitle:
-        'Под капотом работает алгоритм Дейкстры. Он скрыт от глаз, но именно он оживляет 3D-карту: направляет потоки людей, выявляет дефицит зебр и показывает, где жители будут срезать путь по газонам.',
+        'Дейкстра в основе: потоки, зебры, «народные тропы».',
       content: <NetworkGraphSimulator />,
     },
     {
@@ -139,15 +139,15 @@ export default function PresentationPage() {
       badge: 'Жизненный цикл мастер-плана',
       title: 'Как платформа предотвращает градостроительные ошибки',
       subtitle:
-        'Ошибки посадки зданий (например, отрезанный от инфраструктуры ЖК) на этапе эскиза стоят дороже всего. Интерактивная цепочка контроля:',
+        'Ошибка вначале — дороже с каждым этапом',
       content: <UrbanJourneyStaircase />,
     },
     {
       id: 'audience',
       badge: 'Кому нужен «Пульс Города»',
-      title: 'Один инструмент для всех, кто строит район',
+      title: 'Один инструмент для разных специалистов',
       subtitle:
-        'Упрощённый CAD-дизайн выбран осознанно: градостроительная схема собирается за минуты, а скорость проверки гипотез важнее фотореализма.',
+        'Наброски схем на лету. Без тяжёлых симуляторов.',
       content: <AudienceSimulator />,
     },
     {
@@ -155,7 +155,7 @@ export default function PresentationPage() {
       badge: 'Экономика решения',
       title: 'Окупаемость при первом же эскизе',
       subtitle:
-        'Сколько стоит ошибка в транспортной схеме района против мгновенной валидации в «Пульсе Города»?',
+        'Цена неверной гипотезы >> проверка за секунды.',
       content: <RoiSimulator loginHref={loginHref} />,
     },
   ];
@@ -323,7 +323,7 @@ export default function PresentationPage() {
             </span>
           </h1>
 
-          <div className="relative mb-6 max-w-4xl shrink-0 overflow-hidden rounded-2xl border border-white/40 bg-white/40 px-6 py-3 text-center text-sm font-medium leading-relaxed text-gray-800 shadow-sm backdrop-blur-md sm:text-base dark:border-white/10 dark:bg-black/40 dark:text-gray-200 motion-safe:animate-sheet-up [animation-delay:160ms] [animation-fill-mode:both]">
+          <div className="relative mb-6 max-w-2xl shrink-0 overflow-hidden rounded-2xl border border-white/40 bg-white/40 px-5 py-2.5 text-center text-base font-medium leading-snug text-gray-800 shadow-sm backdrop-blur-md sm:text-lg dark:border-white/10 dark:bg-black/40 dark:text-gray-200 motion-safe:animate-sheet-up [animation-delay:160ms] [animation-fill-mode:both]">
             <div aria-hidden="true" className="pointer-events-none absolute inset-x-8 top-0 h-px bg-white/80 dark:bg-white/20" />
             {current.subtitle}
           </div>

@@ -4,7 +4,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Пульс Города',
-  description: 'Хакатон-скелет: Next.js + Spring Boot + Postgres',
+  description: 'Хакатон: Next.js + Spring Boot + Postgres',
   icons: {
     icon: '/favicon.ico',
   },

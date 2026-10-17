@@ -1,0 +1,4 @@
+[   97714ms] [WARNING] [JavaScript Warning: "WEBGL_debug_renderer_info is deprecated in Firefox and will be removed. Please use RENDERER." {file: "http://localhost:3000/_next/static/chunks/962.6b6469abbe19dc13.js" line: 6112}] @ http://localhost:3000/_next/static/chunks/962.6b6469abbe19dc13.js:6112
+[   97739ms] [WARNING] [JavaScript Warning: "WebGL warning: tex(Sub)Image[23]D: Resource has no data (yet?). Uploading zeros."] @ :0
+[   97740ms] [WARNING] [JavaScript Warning: "WebGL warning: texSubImage: `source` cannot be null."] @ :0
+[   97740ms] [WARNING] [JavaScript Warning: "WebGL warning: generateMipmap: Tex image TEXTURE_2D level 0 is incurring lazy initialization."] @ :0

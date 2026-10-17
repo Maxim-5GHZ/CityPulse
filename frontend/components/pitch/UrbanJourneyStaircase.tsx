@@ -5,27 +5,27 @@ import { useState } from 'react';
 const steps = [
   {
     title: '1. Эскиз и посадка объёмов',
-    desc: 'Размещение корпусов на пятне застройки.',
-    danger: 'Без аудита дома ставят «на глаз». Образуются глухие тупики, путь до остановки превышает 800 метров.',
-    safe: '«Пульс Города» автоматически привязывает калитку дома к ближайшему узлу и рассчитывает M1 в момент перетаскивания.',
+    desc: 'Посадка корпусов.',
+    danger: 'На глаз: тупики, 800+ м до остановки.',
+    safe: 'Привязка подъезда к графу. M1 при перетаскивании.',
   },
   {
     title: '2. Пешеходный каркас и зебры',
-    desc: 'Трассировка тротуаров и безопасных переходов.',
-    danger: 'Пешеходные связи проектируются по остаточному принципу. Люди перебегают дорогу в неположенных местах.',
-    safe: 'Тепловая карта нагрузки подсвечивает створы максимального потока жителей и подсказывает, где нужна зебра.',
+    desc: 'Тротуары и зебры.',
+    danger: 'Связи по остатку: перебегают дорогу.',
+    safe: 'Теплокарта потока подскажет створ зебры.',
   },
   {
     title: '3. Стресс-тест и ремонты',
-    desc: 'Проверка связности при перекрытиях.',
-    danger: 'При ремонте сетей или стройке второй очереди квартал оказывается отрезан от транспорта на месяцы.',
-    safe: 'Инструмент «Ремонт» проверяет запас пропускной способности дублёров до выхода техники на объект.',
+    desc: 'Перекрытия.',
+    danger: 'Ремонт режет квартал от транспорта.',
+    safe: '«Ремонт» проверит дублёры до выхода техники.',
   },
   {
     title: '4. Экспертиза и утверждение ТЭП',
-    desc: 'Защита проекта перед инвестором и городом.',
-    danger: 'Многонедельные согласования, замечания экспертизы по дефициту скверов и срыв сроков строительства.',
-    safe: 'Готовый отчёт «Было / Стало» с математическим доказательством 15-минутной доступности всех сервисов.',
+    desc: 'Экспертиза и ТЭП.',
+    danger: 'Недели согласований, срыв сроков.',
+    safe: 'Отчёт «Было / Стало» с доказательством 15 минут.',
   },
 ];
 
@@ -59,8 +59,8 @@ export default function UrbanJourneyStaircase() {
                   {idx + 1}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-bold text-gray-900 dark:text-gray-100">{step.title}</div>
-                  <div className="truncate text-xs text-gray-500 dark:text-gray-400">{step.desc}</div>
+                  <div className="text-base font-bold text-gray-900 dark:text-gray-100">{step.title}</div>
+                  <div className="truncate text-sm text-gray-500 dark:text-gray-400">{step.desc}</div>
                 </div>
               </div>
             </div>
@@ -74,18 +74,18 @@ export default function UrbanJourneyStaircase() {
         </h3>
         <div className="flex flex-col gap-3">
           <div className="rounded-xl border border-rose-200/80 bg-rose-50/70 p-3.5 dark:border-rose-900/40 dark:bg-rose-950/30">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-              Без скоростного аудита:
+            <div className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+              Без аудита:
             </div>
-            <div className="mt-1 text-xs leading-relaxed text-gray-700 dark:text-gray-300">
+            <div className="mt-1 text-sm leading-snug text-gray-700 dark:text-gray-300">
               {steps[activeStep].danger}
             </div>
           </div>
           <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/70 p-3.5 dark:border-emerald-900/40 dark:bg-emerald-950/30">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-              С платформой «Пульс Города»:
+            <div className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+              С «Пульсом Города»:
             </div>
-            <div className="mt-1 text-xs leading-relaxed text-gray-800 dark:text-gray-200">
+            <div className="mt-1 text-sm leading-snug text-gray-800 dark:text-gray-200">
               {steps[activeStep].safe}
             </div>
           </div>

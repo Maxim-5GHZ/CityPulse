@@ -1,0 +1,62 @@
+- generic [ref=e1]:
+  - alert [ref=e40]
+  - generic [ref=e43]:
+    - banner [ref=e44]:
+      - generic [ref=e45]:
+        - link "Пульс Города — рабочая область" [ref=e46] [cursor=pointer]:
+          - /url: /workspace
+          - img "Пульс Города" [ref=e47]
+        - 'button "Аккаунт: admin@citypulse.local" [ref=e51] [cursor=pointer]':
+          - generic [aria-hidden] [ref=e52]: A
+          - generic [ref=e53]: admin@citypulse.local
+    - main [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - generic [ref=e60]: "Проект:"
+            - textbox [ref=e61]: Проект района 2040
+            - generic [ref=e62]: "[0 зданий • 5 связей]"
+          - generic [ref=e63]:
+            - button "Очистить" [ref=e64] [cursor=pointer]
+            - button "Проекты" [ref=e65] [cursor=pointer]
+            - button "Сохранить" [ref=e66] [cursor=pointer]
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - generic [ref=e69]: "Симуляция:"
+            - button "Пауза" [ref=e118] [cursor=pointer]
+            - generic [ref=e119]:
+              - button "1x" [ref=e120] [cursor=pointer]
+              - button "2x" [ref=e121] [cursor=pointer]
+              - button "5x" [ref=e122] [cursor=pointer]
+            - generic [ref=e123]: "• Пешеходные потоки: тротуары, тропинки, трава и школы"
+          - generic [ref=e79]:
+            - button "2D" [ref=e80] [cursor=pointer]
+            - button "3D" [active] [ref=e81] [cursor=pointer]
+        - generic [ref=e82]:
+          - generic [ref=e83]: "До / После:"
+          - generic [ref=e84]:
+            - button "Сейчас" [ref=e85] [cursor=pointer]
+            - button "Было" [ref=e86] [cursor=pointer]
+            - button "Дифф" [ref=e87] [cursor=pointer]
+          - button "📌 Зафиксировать ДО" [ref=e88] [cursor=pointer]
+          - button "↩ Откатить к ДО" [ref=e89] [cursor=pointer]
+          - button "📊 Аналитика" [disabled]
+          - generic [ref=e90]: ДО — пустой холст
+      - generic [ref=e124]:
+        - generic [ref=e125]:
+          - generic [ref=e126]: "3D ДВОЙНИК НА DECK.GL: АВТОНОМНЫЕ ПЕШЕХОДЫ (ТРОТУАРЫ, ПОЛЯ И ШКОЛЫ)"
+          - generic [ref=e127]: "Пешеходов: 0 (тропинки: 0, трава/поля: 0)"
+        - 'img "3D-модель района: 0 зданий, 5 участков дорог, 0 независимых пешеходов (по тротуарам: 0, по полям и траве: 0). Подписи объектов включены." [ref=e128]':
+          - paragraph [ref=e129]: "3D-модель района: 0 зданий, 5 участков дорог, 0 независимых пешеходов (по тротуарам: 0, по полям и траве: 0). Подписи объектов включены."
+          - generic:
+            - generic: дорога
+            - generic: тротуар
+            - generic: зебра
+            - generic: вело
+            - generic: тропа
+            - generic: нагрузка
+            - generic: школа/тег
+            - generic: маршрут А→Б
+            - generic: путь Дейкстры
+            - generic: по тропинке
+            - generic: по траве и полям

@@ -179,53 +179,53 @@ export default function NetworkGraphSimulator() {
   };
 
   return (
-    <div className="flex w-full max-w-5xl flex-col items-center gap-4">
+    <div className="flex w-full max-w-5xl flex-col items-center gap-3">
       <div className="flex flex-wrap items-center justify-center gap-2">
-        <span className="text-xs font-bold uppercase tracking-wider text-gray-800 dark:text-gray-100">
-          Сценарии графа:
+        <span className="text-sm font-bold uppercase tracking-wider text-gray-800 dark:text-gray-100">
+          Граф:
         </span>
         <button
           type="button"
           onClick={() => pickMode('bus')}
-          className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
+          className={`transform-gpu rounded-full px-4 py-1.5 text-sm font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'bus'
               ? 'bg-blue-600 text-white shadow-md'
               : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
-          Транспортная доступность (M1)
+          Транспорт (M1)
         </button>
         <button
           type="button"
           onClick={() => pickMode('park')}
-          className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
+          className={`transform-gpu rounded-full px-4 py-1.5 text-sm font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'park'
               ? 'bg-emerald-600 text-white shadow-md'
               : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
-          Рекреация и соцобъекты (M2)
+          Соцобъекты (M2)
         </button>
         <button
           type="button"
           onClick={() => pickMode('repair')}
-          className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
+          className={`transform-gpu rounded-full px-4 py-1.5 text-sm font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'repair'
               ? 'bg-rose-600 text-white shadow-md'
               : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
-          Срезы и «народные тропы»
+          Ремонты и тропы
         </button>
       </div>
 
-      <div className="relative w-full overflow-hidden rounded-[32px] border border-white/60 bg-white/70 p-5 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.9),0_20px_50px_-14px_rgba(20,26,38,0.3)] backdrop-blur-xl dark:border-white/20 dark:bg-gray-900/70">
-        <p className="mb-2 text-center text-[12px] font-medium text-gray-700 dark:text-gray-300">
-          Кликните любой узел — он станет отправной точкой. Волна показывает логику обхода сети.
+      <div className="relative w-full overflow-hidden rounded-[32px] border border-white/60 bg-white/70 p-4 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.9),0_20px_50px_-14px_rgba(20,26,38,0.3)] backdrop-blur-xl dark:border-white/20 dark:bg-gray-900/70">
+        <p className="mb-2 text-center text-sm font-medium text-gray-700 dark:text-gray-300">
+          Клик — точка старта. Волна — обход сети.
         </p>
         <svg
           viewBox="0 0 640 360"
-          className="h-auto max-h-[38vh] w-full"
+          className="h-auto max-h-[34vh] w-full"
           preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Интерактивная схема работы алгоритма на графе улиц"
@@ -317,42 +317,42 @@ export default function NetworkGraphSimulator() {
           )}
         </svg>
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-300 pt-3 text-xs dark:border-gray-700">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-gray-300 pt-3 text-sm dark:border-gray-700">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 shrink-0 rounded-full bg-blue-600 motion-safe:animate-pulse" />
             <span className="font-mono font-bold text-gray-900 dark:text-gray-100">
               {result ? (
                 <>
-                  Дистанция: {result.dist} м · {minutes} мин пешком
+                  {result.dist} м · {minutes} мин пешком
                   {delta > 0 && <span className="text-rose-600 dark:text-rose-400"> · обход +{delta} м</span>}
-                  {mode === 'park' && <span className="text-emerald-600 dark:text-emerald-400"> · M2 в радиусе</span>}
+                  {mode === 'park' && <span className="text-emerald-600 dark:text-emerald-400"> · M2</span>}
                 </>
               ) : (
-                'Нет связного пути — изоляция (штраф нормативов)'
+                'Нет пути — изоляция'
               )}
             </span>
           </div>
-          <span className="font-mono text-[11px] font-bold text-gray-500">Поиск с учётом преград</span>
+          <span className="font-mono text-xs font-bold text-gray-500">С учётом преград</span>
         </div>
       </div>
 
       <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 mt-2">
         <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-gray-800/60">
-          <div className="text-xs font-black uppercase text-blue-700 dark:text-blue-400">Визуализация в 3D</div>
-          <p className="mt-2 text-xs font-medium text-gray-800 dark:text-gray-200 leading-relaxed">
-            В 3D-режиме этот граф оживает: алгоритм направляет тысячи частиц-пешеходов, показывая реальную загрузку тротуаров.
+          <div className="text-sm font-black uppercase text-blue-700 dark:text-blue-400">3D</div>
+          <p className="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200 leading-snug">
+            Граф оживает: частицы показывают загрузку тротуаров.
           </p>
         </div>
         <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-gray-800/60">
-          <div className="text-xs font-black uppercase text-emerald-700 dark:text-emerald-400">Анализ МГН</div>
-          <p className="mt-2 text-xs font-medium text-gray-800 dark:text-gray-200 leading-relaxed">
-            Учитывается безбарьерная среда. Если на кратчайшем пути подземный переход — для инвалидов и мам с колясками маршрут пересчитывается в обход.
+          <div className="text-sm font-black uppercase text-emerald-700 dark:text-emerald-400">МГН</div>
+          <p className="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200 leading-snug">
+            Переход без лифта — маршрут в обход.
           </p>
         </div>
         <div className="rounded-2xl border border-white/60 bg-white/70 p-4 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-gray-800/60">
-          <div className="text-xs font-black uppercase text-rose-700 dark:text-rose-400">Выявление ошибок</div>
-          <p className="mt-2 text-xs font-medium text-gray-800 dark:text-gray-200 leading-relaxed">
-            Алгоритм мгновенно находит «глухие тупики» и показывает, где жители протопчут газон («народная тропа»), чтобы срезать путь к остановке.
+          <div className="text-sm font-black uppercase text-rose-700 dark:text-rose-400">Ошибки</div>
+          <p className="mt-2 text-sm font-medium text-gray-800 dark:text-gray-200 leading-snug">
+            Тупики и тропы: где срежут газон к остановке.
           </p>
         </div>
       </div>

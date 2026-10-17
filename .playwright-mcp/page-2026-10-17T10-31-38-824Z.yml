@@ -1,0 +1,60 @@
+- generic [active] [ref=e1]:
+  - alert [ref=e40]
+  - generic [ref=e43]:
+    - banner [ref=e44]:
+      - generic [ref=e45]:
+        - link "Пульс Города — рабочая область" [ref=e46] [cursor=pointer]:
+          - /url: /workspace
+          - img "Пульс Города" [ref=e47]
+        - 'button "Аккаунт: admin@citypulse.local" [ref=e51] [cursor=pointer]':
+          - generic [aria-hidden] [ref=e52]: A
+          - generic [ref=e53]: admin@citypulse.local
+    - main [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]:
+          - generic [ref=e59]:
+            - generic [ref=e60]: "Проект:"
+            - textbox [ref=e61]: Проект района 2040
+            - generic [ref=e62]: "[0 зданий • 0 связей]"
+          - generic [ref=e63]:
+            - button "Очистить" [ref=e64] [cursor=pointer]
+            - button "Проекты" [ref=e65] [cursor=pointer]
+            - button "Сохранить" [ref=e66] [cursor=pointer]
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - generic [ref=e69]: "САПР:"
+            - button "Выбор" [ref=e70] [cursor=pointer]
+            - button "Шоссе" [ref=e71] [cursor=pointer]
+            - button "Тротуар" [ref=e72] [cursor=pointer]
+            - button "Зебра" [ref=e73] [cursor=pointer]
+            - button "Подземный" [ref=e74] [cursor=pointer]
+            - button "Дом" [ref=e75] [cursor=pointer]
+            - button "Сквер" [ref=e76] [cursor=pointer]
+            - button "Ремонт" [ref=e77] [cursor=pointer]
+            - button "Снос" [ref=e78] [cursor=pointer]
+          - generic [ref=e79]:
+            - button "2D" [ref=e80] [cursor=pointer]
+            - button "3D" [ref=e81] [cursor=pointer]
+        - generic [ref=e82]:
+          - generic [ref=e83]: "До / После:"
+          - generic [ref=e84]:
+            - button "Сейчас" [ref=e85] [cursor=pointer]
+            - button "Было" [ref=e86] [cursor=pointer]
+            - button "Дифф" [ref=e87] [cursor=pointer]
+          - button "📌 Зафиксировать ДО" [ref=e88] [cursor=pointer]
+          - button "↩ Откатить к ДО" [ref=e89] [cursor=pointer]
+          - button "📊 Аналитика" [disabled]
+          - generic [ref=e90]: ДО — пустой холст
+      - generic [ref=e93]:
+        - generic [ref=e94]:
+          - generic [ref=e95]:
+            - generic [ref=e96]: "МАСШТАБ: 1ед = 1м"
+            - generic [ref=e97]: "РЕЖИМ: ВЫБОР (ТАЩИ ОБЪЕКТ • ФОН — ПАНОРАМА • ПКМ — МЕНЮ)"
+          - generic [ref=e98]:
+            - text: "Масштаб:"
+            - generic [ref=e99]: 100%
+            - text: "X:"
+            - generic [ref=e100]: 0м
+            - text: "| Y:"
+            - generic [ref=e101]: 0м
+        - img "САПР чертёж района" [ref=e103]
