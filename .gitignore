@@ -21,4 +21,5 @@ nginx/certs/*.key
 .idea/
 .vscode/
 all_code.txt
+constructor_dump.txt
 pgdata/
