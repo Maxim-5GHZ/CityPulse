@@ -31,6 +31,8 @@ interface DeckCityViewProps {
   parkPaths: Record<string, PathResult | null>;
   schoolPaths?: Record<string, PathResult | null>;
   shopPaths?: Record<string, PathResult | null>;
+  // Маршрут А → Б из ПКМ: когда задан — отдельная группа идёт строго по нему.
+  routePathNodeIds?: string[];
   simPlaying?: boolean;
   simSpeed?: 1 | 2 | 5;
 }
@@ -659,6 +661,7 @@ export default function DeckCityView({
   parkPaths,
   schoolPaths = {},
   shopPaths = {},
+  routePathNodeIds = [],
   simPlaying = true,
   simSpeed = 1,
 }: DeckCityViewProps) {
@@ -687,7 +690,8 @@ export default function DeckCityView({
         const schoolCount = Math.min(4, Math.max(2, Math.round(b.residents / 300)));
         for (let k = 0; k < schoolCount; k++) {
           globalIdx++;
-          const isGrass = k % 2 === 1;
+          // Школьники обожают срезать: 75% идут напрямик по газонам.
+          const isGrass = k % 4 !== 0;
           const jitter = ((k * 19) % 7 - 3) * 0.45;
           const path = isGrass
             ? buildGrassRoute(schoolPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
@@ -729,12 +733,13 @@ export default function DeckCityView({
       }
 
       // 2. Пешеходы к остановке / с остановки: часть — по тротуарам,
-      // каждый третий срезает через газон/поле.
+      // половина спешит и срезает через газон/поле.
       if (busPath && busPath.pathNodeIds.length >= 2) {
         const busAgentCount = Math.min(5, Math.max(2, Math.round(b.residents / 350)));
         for (let k = 0; k < busAgentCount; k++) {
           globalIdx++;
-          const isGrass = k % 3 === 2;
+          // Взрослые спешат: 50% идут по траве.
+          const isGrass = k % 2 !== 0;
           const jitter = ((k * 17) % 5 - 2) * 0.55;
           const path = isGrass
             ? buildGrassRoute(busPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
@@ -781,7 +786,8 @@ export default function DeckCityView({
         const parkAgentCount = Math.min(3, Math.max(1, Math.round(b.residents / 500)));
         for (let k = 0; k < parkAgentCount; k++) {
           globalIdx++;
-          const isGrass = k % 2 === 0;
+          // Гуляющие не любят асфальт: 75% идут по траве.
+          const isGrass = k % 4 !== 3;
           const jitter = ((k * 13) % 5 - 2) * 0.6;
           const path = isGrass
             ? buildGrassRoute(parkPath.pathNodeIds, scenario, nodeMap, jitter, Z_GRASS_WALK)
@@ -846,8 +852,45 @@ export default function DeckCityView({
       }
     });
 
+    // 5. Маршрут А → Б (точки ставит пользователь через ПКМ на 2D-карте):
+    // отдельная группа из 6 агентов идёт строго по заданной линии туда-обратно.
+    // Маршрута нет — все ведут себя как обычно (блоки 1–4 выше).
+    if (routePathNodeIds.length >= 2) {
+      const routePath = buildPavedRoute(routePathNodeIds, scenario, nodeMap, 0, 0, Z_PAVED_WALK);
+      if (routePath.length >= 2) {
+        const cumDist = computeCumulativeDistances(routePath);
+        const totalDist = cumDist[cumDist.length - 1];
+        if (totalDist >= 5) {
+          for (let k = 0; k < 6; k++) {
+            globalIdx++;
+            // Чётные — туда (А → Б), нечётные — обратно по развёрнутой линии.
+            const back = k % 2 === 1;
+            const path = back ? [...routePath].reverse() : routePath;
+            const cum = back ? computeCumulativeDistances(path) : cumDist;
+            agents.push({
+              id: `ped-route-${k}`,
+              name: CITIZEN_NAMES[globalIdx % CITIZEN_NAMES.length],
+              buildingId: '',
+              fromName: back ? 'Точка Б' : 'Точка А',
+              toName: back ? 'Точка А' : 'Точка Б',
+              activity: 'По маршруту А → Б',
+              pathType: 'trophinka',
+              path,
+              cumDist: cum,
+              totalDist,
+              speed: 1.2 + (k % 3) * 0.07,
+              dist: (k * totalDist) / 6,
+              direction: 1,
+              color: [168, 85, 247],
+              pauseRemaining: 0,
+            });
+          }
+        }
+      }
+    }
+
     return agents;
-  }, [scenario, busPaths, parkPaths, schoolPaths, shopPaths, nodeMap]);
+  }, [scenario, busPaths, parkPaths, schoolPaths, shopPaths, routePathNodeIds, nodeMap]);
 
   // Мутабельный массив агентов для симуляции 60 кадров/сек.
   const agentsRef = useRef<PedestrianAgent[]>([]);

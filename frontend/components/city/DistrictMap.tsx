@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL, PathResult } from '@/lib/city-engine/types';
 import { CITY_DEFAULTS } from '@/lib/city-engine/metrics';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
+import { buildAdjacency, findShortestPath } from '@/lib/city-engine/dijkstra';
 import DistrictContextMenu from './DistrictContextMenu';
 import BuildingContextMenu from './BuildingContextMenu';
+import RouteContextMenu from './RouteContextMenu';
 import { pointsToSmoothSvgPath } from '@/lib/city-engine/geometry';
 
 export type ToolMode =
@@ -21,6 +23,12 @@ export type ToolMode =
 // Кнопок «Остановка»/«Школа» больше нет: остановка — ПКМ по дороге,
 // соцобъекты — ПКМ по дому (теги). Старые school-amenity из сейвов
 // продолжают рендериться и считаться.
+
+/** Маршрут А → Б: точки выбирает пользователь через ПКМ, считает умный Дейкстра. */
+export interface RouteSelection {
+  startId: string | null;
+  pathNodeIds: string[];
+}
 
 interface DistrictMapProps {
   scenario: DistrictScenario;
@@ -41,6 +49,10 @@ interface DistrictMapProps {
   // hover по дому с тегом показывает его реальный путь из движка.
   busPaths: Record<string, PathResult | null>;
   toolMode: ToolMode;
+  // Маршрут А → Б живёт в странице (видят и 2D, и 3D): точки — ПКМ пользователя.
+  route: RouteSelection | null;
+  onRouteChange: (route: RouteSelection | null) => void;
+  onNotify?: (text: string) => void;
   onAddRoad: (x1: number, y1: number, x2: number, y2: number, type?: 'road' | 'sidewalk' | 'crossing') => void;
   onAddPolyBuilding: (points: { x: number; y: number }[]) => void;
   onAddPolyPark: (points: { x: number; y: number }[]) => void;
@@ -88,6 +100,9 @@ export default function DistrictMap({
   edgeLoads,
   busPaths,
   toolMode,
+  route,
+  onRouteChange,
+  onNotify,
   onAddRoad,
   onAddPolyBuilding,
   onAddPolyPark,
@@ -130,16 +145,21 @@ export default function DistrictMap({
   // ПКМ-меню: у дома и дороги разный набор. wx/wy — мировая точка клика
   // (нужна остановке для разреза ребра строго в месте клика).
   const [contextMenu, setContextMenu] = useState<{
-    kind: 'edge' | 'building';
+    kind: 'edge' | 'building' | 'map';
     x: number;
     y: number;
     edgeId?: string;
     buildingId?: string;
+    nodeId?: string;
     wx: number;
     wy: number;
   } | null>(null);
-  // Панорама: сдвиг вида относительно базового viewBox.
+  // Панорама и зум: сдвиг вида + масштаб относительно базового viewBox.
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  // Кастомный маршрут А → Б живёт в странице (видят и 2D, и 3D).
+  const routeStartId = route?.startId ?? null;
+  const routePath = route && route.pathNodeIds.length >= 2 ? route.pathNodeIds : null;
   // Drag объекта: kind + откуда тащим + старт курсора + текущая точка (превью).
   const [drag, setDrag] = useState<{
     kind: 'node' | 'building' | 'amenity' | 'park';
@@ -212,6 +232,10 @@ export default function DistrictMap({
     return { x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 };
   };
 
+  // Реф актуального вида для native-обработчика wheel (чтобы не перевешивать слушатель).
+  const viewStateRef = useRef({ zoom, pan });
+  viewStateRef.current = { zoom, pan };
+
   // Базовый вид: дефолт 960×620 + авто-расширение под контент с полями.
   // Карта динамически растёт, когда здания/узлы подходят к краю.
   const baseView = useMemo(() => {
@@ -248,7 +272,9 @@ export default function DistrictMap({
     return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
   }, [scenario.nodes, scenario.buildings, scenario.amenities]);
 
-  const viewBoxStr = `${baseView.x + pan.x} ${baseView.y + pan.y} ${baseView.w} ${baseView.h}`;
+  const scaledW = baseView.w / zoom;
+  const scaledH = baseView.h / zoom;
+  const viewBoxStr = `${baseView.x + pan.x} ${baseView.y + pan.y} ${scaledW} ${scaledH}`;
 
   // Мировые координаты без снапа (для drag и панорамы).
   const toWorldRaw = (clientX: number, clientY: number): { x: number; y: number } => {
@@ -256,15 +282,15 @@ export default function DistrictMap({
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
     return {
-      x: baseView.x + pan.x + ((clientX - rect.left) / rect.width) * baseView.w,
-      y: baseView.y + pan.y + ((clientY - rect.top) / rect.height) * baseView.h,
+      x: baseView.x + pan.x + ((clientX - rect.left) / rect.width) * scaledW,
+      y: baseView.y + pan.y + ((clientY - rect.top) / rect.height) * scaledH,
     };
   };
 
   const getSvgCoordinates = (e: ReactMouseEvent<SVGSVGElement>): { x: number; y: number } => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = baseView.x + pan.x + ((e.clientX - rect.left) / rect.width) * baseView.w;
-    const y = baseView.y + pan.y + ((e.clientY - rect.top) / rect.height) * baseView.h;
+    const x = baseView.x + pan.x + ((e.clientX - rect.left) / rect.width) * scaledW;
+    const y = baseView.y + pan.y + ((e.clientY - rect.top) / rect.height) * scaledH;
     return snapToNode(x, y);
   };
 
@@ -338,8 +364,8 @@ export default function DistrictMap({
       const svg = svgRef.current;
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const sx = baseView.w / rect.width;
-      const sy = baseView.h / rect.height;
+      const sx = scaledW / rect.width;
+      const sy = scaledH / rect.height;
       const nx = panStart.current.panX - (e.clientX - panStart.current.cx) * sx;
       const ny = panStart.current.panY - (e.clientY - panStart.current.cy) * sy;
       if (Math.hypot(e.clientX - panStart.current.cx, e.clientY - panStart.current.cy) > 4) {
@@ -355,6 +381,34 @@ export default function DistrictMap({
     panStart.current = null;
   };
 
+  // Зум колесом мыши с фокусом на курсор (карта не «улетает» при скролле).
+  // Native-слушатель: React onWheel пассивный и preventDefault там не сработает.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault(); // гасим скролл страницы над картой
+      const rect = svg.getBoundingClientRect();
+      const { zoom: z, pan: p } = viewStateRef.current;
+
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const worldX = baseView.x + p.x + (mouseX / rect.width) * (baseView.w / z);
+      const worldY = baseView.y + p.y + (mouseY / rect.height) * (baseView.h / z);
+
+      const dz = Math.exp(-e.deltaY * 0.002);
+      const newZoom = Math.max(0.2, Math.min(6, z * dz));
+
+      const newPanX = worldX - baseView.x - (mouseX / rect.width) * (baseView.w / newZoom);
+      const newPanY = worldY - baseView.y - (mouseY / rect.height) * (baseView.h / newZoom);
+
+      setZoom(newZoom);
+      setPan({ x: newPanX, y: newPanY });
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [baseView.x, baseView.y, baseView.w, baseView.h]);
+
   // Escape + pointerup на уровне окна: отмена/коммит drag и панорамы даже вне svg.
   // Клик/тап вне меню закрывает его (само меню помечено data-ctx-menu).
   useEffect(() => {
@@ -365,6 +419,7 @@ export default function DistrictMap({
         setRoadStart(null);
         setPolygonDraft([]);
         setContextMenu(null);
+        onRouteChange(null);
         cancelLongPress();
       }
     };
@@ -396,7 +451,7 @@ export default function DistrictMap({
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointerdown', onDown);
     };
-  }, []);
+  }, [onRouteChange]);
 
   // Переход в «Было»/«Дифф» закрывает ПКМ-меню: его действия мутируют текущий
   // сценарий, а карта в readOnly заявляет «ТОЛЬКО ЧТЕНИЕ».
@@ -489,6 +544,64 @@ export default function DistrictMap({
     openBuildingMenu(e.clientX, e.clientY, buildingId);
   };
 
+  // Радиус снапа ПКМ-точки маршрута к ближайшему узлу графа (м).
+  const ROUTE_SNAP_M = 50;
+
+  // ПКМ по фону карты: точка маршрута А/Б на ближайшем узле в радиусе снапа.
+  // Маршрут сценарий не мутирует (только оверлей), поэтому доступен и в «Дифф».
+  // В «Было» меню нет: 3D всегда показывает current, точки обязаны быть из него.
+  const handleSvgContextMenu = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (diffView === 'base') return;
+    e.preventDefault();
+    const w = toWorldRaw(e.clientX, e.clientY);
+    let best: GraphNode | null = null;
+    let bestDist = ROUTE_SNAP_M;
+    for (const n of scenario.nodes) {
+      const d = Math.hypot(n.x - w.x, n.y - w.y);
+      if (d <= bestDist) {
+        bestDist = d;
+        best = n;
+      }
+    }
+    if (!best) {
+      onNotify?.('Рядом нет узла графа — кликните ближе к дороге');
+      return;
+    }
+    setContextMenu({
+      kind: 'map',
+      x: e.clientX,
+      y: e.clientY,
+      nodeId: best.id,
+      wx: Math.round(w.x),
+      wy: Math.round(w.y),
+    });
+  };
+
+  // Точка А: только фиксируем старт, путь появится после точки Б.
+  const setRouteStart = (nodeId: string) => {
+    onRouteChange({ startId: nodeId, pathNodeIds: [] });
+    onNotify?.('Точка А поставлена — кликните ПКМ для точки Б');
+  };
+
+  // Точка Б: считаем умным Дейкстрой от зафиксированной точки А.
+  const setRouteEnd = (nodeId: string) => {
+    const startId = route?.startId;
+    if (!startId) return;
+    if (startId === nodeId) {
+      onRouteChange(null);
+      onNotify?.('Точки совпали — маршрут сброшен');
+      return;
+    }
+    const adj = buildAdjacency(scenario.nodes, scenario.edges);
+    const path = findShortestPath(startId, nodeId, adj);
+    if (!path) {
+      onNotify?.('Маршрут не найден: граф несвязен');
+      return;
+    }
+    onRouteChange({ startId, pathNodeIds: path.pathNodeIds });
+    onNotify?.(`Маршрут: ${path.distanceM} м, ~${path.timeMinutes} мин пешком`);
+  };
+
   const handleEdgeClick = (
     e: ReactMouseEvent,
     edge: GraphEdge,
@@ -542,6 +655,15 @@ export default function DistrictMap({
       .filter((n): n is GraphNode => !!n)
       .map((n) => ({ x: n.x, y: n.y })),
   );
+  // Маршрут А → Б (точки ставит пользователь через ПКМ): сплайн по узлам пути.
+  const customRouteSvgPath = routePath
+    ? pointsToSmoothSvgPath(
+        routePath
+          .map((id) => nodeMap.get(id))
+          .filter((n): n is GraphNode => !!n)
+          .map((n) => ({ x: n.x, y: n.y })),
+      )
+    : '';
   // Ghost-слой «Дифф»: чего нет в проекте относительно ДО.
   const baseEdgeIds = new Set(baseScenario.edges.map((e) => e.id));
   const currentEdgeIds = new Set(scenarioProp.edges.map((e) => e.id));
@@ -632,6 +754,7 @@ export default function DistrictMap({
           )}
         </div>
         <div>
+          Масштаб: <span className="text-blue-400 mr-2">{Math.round(zoom * 100)}%</span>
           X: <span className="text-emerald-400">{mousePos?.x ?? 0}м</span> | Y:{' '}
           <span className="text-emerald-400">{mousePos?.y ?? 0}м</span>
         </div>
@@ -643,6 +766,7 @@ export default function DistrictMap({
         className="h-auto w-full select-none"
         style={{ minHeight: '520px', cursor: readOnly ? 'default' : toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
         onClick={handleSvgClick}
+        onContextMenu={handleSvgContextMenu}
         onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
         onPointerDown={handleSvgPointerDown}
         onPointerMove={handleSvgPointerMove}
@@ -1055,6 +1179,20 @@ export default function DistrictMap({
           />
         )}
 
+        {/* Инструмент «Маршрут»: кратчайший путь между точками А и Б */}
+        {customRouteSvgPath && (
+          <path
+            d={customRouteSvgPath}
+            fill="none"
+            stroke="#a855f7"
+            strokeWidth={6}
+            strokeDasharray="8 6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            opacity={0.9}
+          />
+        )}
+
         {/* Интерактив рёбер: оверлеи + хит-зоны */}
         {scenario.edges.map((edge) => {
           const from = nodeMap.get(edge.from);
@@ -1356,7 +1494,7 @@ export default function DistrictMap({
                 cx={rendered.x}
                 cy={rendered.y}
                 r={node.type === 'roundabout' ? 14 : node.isRoundabout ? 2.5 : 3}
-                fill={node.type === 'roundabout' ? '#1e3a8a' : canRing ? '#f59e0b' : '#64748b'}
+                fill={routeStartId === node.id ? '#a855f7' : node.type === 'roundabout' ? '#1e3a8a' : canRing ? '#f59e0b' : '#64748b'}
                 style={{ cursor: toolMode === 'select' && !locked ? 'move' : undefined }}
                 onPointerDown={(e) => {
                   if (locked) return;
@@ -1371,6 +1509,10 @@ export default function DistrictMap({
               >
                 {canRing && <title>Клик — построить кольцо</title>}
               </circle>
+              {/* Пульсирующий маркер точки А (маршрут ставится через ПКМ) */}
+              {routeStartId === node.id && (
+                <circle cx={rendered.x} cy={rendered.y} r={12} fill="none" stroke="#a855f7" strokeWidth={2} className="motion-safe:animate-ping" />
+              )}
             </g>
           );
         })}
@@ -1453,6 +1595,20 @@ export default function DistrictMap({
           onDeleteBuilding={() => {
             onDeleteBuilding(menuBuilding.id);
           }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {contextMenu?.kind === 'map' && contextMenu.nodeId && (
+        <RouteContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          nodeLabel={`узел ${contextMenu.wx}, ${contextMenu.wy}`}
+          hasStart={!!route?.startId}
+          hasRoute={!!routePath}
+          onSetStart={() => setRouteStart(contextMenu.nodeId as string)}
+          onSetEnd={() => setRouteEnd(contextMenu.nodeId as string)}
+          onClear={() => onRouteChange(null)}
           onClose={() => setContextMenu(null)}
         />
       )}

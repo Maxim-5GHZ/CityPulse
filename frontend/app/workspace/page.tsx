@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/auth';
 import AppHeader from '@/components/AppHeader';
-import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
+import DistrictMap, { RouteSelection, ToolMode } from '@/components/city/DistrictMap';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
 import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
@@ -45,6 +45,9 @@ export default function WorkspacePage() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
+  // Маршрут А → Б: точки ставит пользователь через ПКМ на 2D-карте,
+  // путь считают умным Дейкстрой; те же узлы идут в 3D человечкам.
+  const [route, setRoute] = useState<RouteSelection | null>(null);
 
   // Мобильный таб: на смартфонах переключаемся между чертежом и панелью аудита
   const [mobileTab, setMobileTab] = useState<'canvas' | 'inspector'>('canvas');
@@ -721,6 +724,9 @@ export default function WorkspacePage() {
                   edgeLoads={diffView === 'base' ? baseMetrics.edgeLoads : metrics.edgeLoads}
                   busPaths={diffView === 'base' ? baseMetrics.busPaths : metrics.busPaths}
                   toolMode={toolMode}
+                  route={route}
+                  onRouteChange={setRoute}
+                  onNotify={showHint}
                   onAddRoad={handleAddRoad}
                   onAddPolyBuilding={handleAddPolyBuilding}
                   onAddPolyPark={handleAddPolyPark}
@@ -759,6 +765,7 @@ export default function WorkspacePage() {
                   parkPaths={metrics.parkPaths}
                   schoolPaths={metrics.schoolPaths}
                   shopPaths={metrics.shopPaths}
+                  routePathNodeIds={route?.pathNodeIds ?? []}
                   simPlaying={simPlaying}
                   simSpeed={simSpeed}
                 />

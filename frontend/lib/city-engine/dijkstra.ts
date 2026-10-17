@@ -5,6 +5,7 @@ interface AdjacencyEdge {
   edgeId: string;
   lengthM: number;
   isAccessible: boolean;
+  weight: number; // «Привлекательность» пути (штрафы и бонусы среды)
 }
 
 export function buildAdjacency(
@@ -19,8 +20,22 @@ export function buildAdjacency(
   for (const e of edges) {
     if (!e.isActive) continue;
     if (mobilityOnly && !e.isAccessible) continue;
-    adj.get(e.from)?.push({ to: e.to, edgeId: e.id, lengthM: e.lengthM, isAccessible: e.isAccessible });
-    adj.get(e.to)?.push({ to: e.from, edgeId: e.id, lengthM: e.lengthM, isAccessible: e.isAccessible });
+
+    // Умные веса: люди выбирают логичные маршруты, а не геометрически короткие.
+    let weight = e.lengthM;
+    if (e.type === 'road') {
+      if (!e.hasSidewalkLeft && !e.hasSidewalkRight) weight *= 3.5; // сильный штраф: обочина проезжей части
+      else weight *= 1.2; // лёгкий штраф за шум и выхлопы (по сравнению со сквером)
+    } else if (e.type === 'park_path') {
+      weight *= 0.6; // бонус: срезы через парки
+    } else if (e.type === 'crossing') {
+      weight *= 0.4; // супер-бонус: наземные зебры притягивают
+    } else if (e.type === 'underpass') {
+      weight *= 2.0; // штраф: лестницы подземных переходов
+    }
+
+    adj.get(e.from)?.push({ to: e.to, edgeId: e.id, lengthM: e.lengthM, isAccessible: e.isAccessible, weight });
+    adj.get(e.to)?.push({ to: e.from, edgeId: e.id, lengthM: e.lengthM, isAccessible: e.isAccessible, weight });
   }
   return adj;
 }
@@ -34,7 +49,7 @@ export function findShortestPath(
     return { fromNodeId: startNodeId, toNodeId: targetNodeId, distanceM: 0, timeMinutes: 0, pathNodeIds: [startNodeId], isFullyAccessible: true };
   }
   const dist = new Map<string, number>();
-  const prev = new Map<string, { node: string; isAccessible: boolean }>();
+  const prev = new Map<string, { node: string; isAccessible: boolean; physicalLengthM: number }>();
   const visited = new Set<string>();
   dist.set(startNodeId, 0);
   while (true) {
@@ -53,10 +68,11 @@ export function findShortestPath(
     for (let i = 0; i < neighbors.length; i++) {
       const edge = neighbors[i];
       if (visited.has(edge.to)) continue;
-      const alt = shortestDist + edge.lengthM;
+      const alt = shortestDist + edge.weight; // поиск — по привлекательности
       if (alt < (dist.get(edge.to) ?? Infinity)) {
         dist.set(edge.to, alt);
-        prev.set(edge.to, { node: closestNode, isAccessible: edge.isAccessible });
+        // Физическую длину сохраняем отдельно — в ответ идут честные метры.
+        prev.set(edge.to, { node: closestNode, isAccessible: edge.isAccessible, physicalLengthM: edge.lengthM });
       }
     }
   }
@@ -65,18 +81,20 @@ export function findShortestPath(
   const path: string[] = [targetNodeId];
   let curr = targetNodeId;
   let allAccessible = true;
+  let totalPhysicalM = 0; // сумма реальных метров вдоль найденного пути
   while (curr !== startNodeId) {
     const step = prev.get(curr);
     if (!step) break;
     if (!step.isAccessible) allAccessible = false;
+    totalPhysicalM += step.physicalLengthM;
     curr = step.node;
     path.unshift(curr);
   }
   return {
     fromNodeId: startNodeId,
     toNodeId: targetNodeId,
-    distanceM: Math.round(targetDist),
-    timeMinutes: Number((targetDist / 75).toFixed(1)),
+    distanceM: Math.round(totalPhysicalM),
+    timeMinutes: Number((totalPhysicalM / 75).toFixed(1)),
     pathNodeIds: path,
     isFullyAccessible: allAccessible,
   };
