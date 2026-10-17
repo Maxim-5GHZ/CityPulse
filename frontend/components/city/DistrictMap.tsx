@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { DistrictScenario, GraphNode, GraphEdge, Building } from '@/lib/city-engine/types';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { DistrictScenario, GraphNode, GraphEdge, Building, BuildingTag, BUILDING_TAG_LABEL } from '@/lib/city-engine/types';
 import { RING_RADIUS, isRingEdge } from '@/lib/city-engine/roundabout';
 import DistrictContextMenu from './DistrictContextMenu';
+import BuildingContextMenu from './BuildingContextMenu';
 import { pointsToSmoothSvgPath } from '@/lib/city-engine/geometry';
 
 export type ToolMode =
@@ -16,6 +17,9 @@ export type ToolMode =
   | 'poly_park'
   | 'block_spot'
   | 'delete';
+// Кнопок «Остановка»/«Школа» больше нет: остановка — ПКМ по дороге,
+// соцобъекты — ПКМ по дому (теги). Старые school-amenity из сейвов
+// продолжают рендериться и считаться.
 
 interface DistrictMapProps {
   scenario: DistrictScenario;
@@ -29,6 +33,8 @@ interface DistrictMapProps {
   onAddRoad: (x1: number, y1: number, x2: number, y2: number, type?: 'road' | 'sidewalk' | 'crossing') => void;
   onAddPolyBuilding: (points: { x: number; y: number }[]) => void;
   onAddPolyPark: (points: { x: number; y: number }[]) => void;
+  onAddBusStopOnEdge: (edgeId: string, px: number, py: number) => void;
+  onSetBuildingTag: (buildingId: string, tag: BuildingTag | null) => void;
   onAddCrossingDirect: (edgeId: string, px: number, py: number, isUnderpass?: boolean) => void;
   onSplitAndBlockSpot: (edgeId: string, px: number, py: number) => void;
   onUpgradeLanes: (edgeId: string) => void;
@@ -37,12 +43,22 @@ interface DistrictMapProps {
   onDeleteBuilding: (id: string) => void;
   onDeleteEdge: (id: string) => void;
   onDeleteAmenity: (id: string) => void;
+  onMoveNode: (id: string, x: number, y: number) => void;
+  onMoveBuilding: (id: string, x: number, y: number) => void;
+  onMoveAmenity: (id: string, x: number, y: number) => void;
 }
 
 // Половина ширины полотна по числу полос (для подложек стыков).
 const halfWidth = (edge: GraphEdge): number => (edge.lanes === 4 ? 17 : 11);
 
 // Палитра полотна: асфальт заметно светлее фона (#141822), бордюр — темнее асфальта.
+// Бейдж социального тега корпуса: приглушённые тона, без неона.
+const TAG_BADGE: Record<BuildingTag, { letter: string; fill: string }> = {
+  school: { letter: 'Ш', fill: '#d97706' },
+  police: { letter: 'П', fill: '#2563eb' },
+  hospital: { letter: 'Б', fill: '#334155' },
+  shop: { letter: 'М', fill: '#64748b' },
+};
 const ROAD_ASPHALT = '#2f3b52';
 const ROAD_CASING = '#0d1219';
 const RING_ISLAND = '#1c2433';
@@ -59,6 +75,8 @@ export default function DistrictMap({
   onAddRoad,
   onAddPolyBuilding,
   onAddPolyPark,
+  onAddBusStopOnEdge,
+  onSetBuildingTag,
   onAddCrossingDirect,
   onSplitAndBlockSpot,
   onUpgradeLanes,
@@ -67,13 +85,55 @@ export default function DistrictMap({
   onDeleteBuilding,
   onDeleteEdge,
   onDeleteAmenity,
+  onMoveNode,
+  onMoveBuilding,
+  onMoveAmenity,
 }: DistrictMapProps) {
   const [roadStart, setRoadStart] = useState<{ x: number; y: number } | null>(null);
   const [polygonDraft, setPolygonDraft] = useState<{ x: number; y: number }[]>([]);
   const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; edgeId: string } | null>(null);
+  // ПКМ-меню: у дома и дороги разный набор. wx/wy — мировая точка клика
+  // (нужна остановке для разреза ребра строго в месте клика).
+  const [contextMenu, setContextMenu] = useState<{
+    kind: 'edge' | 'building';
+    x: number;
+    y: number;
+    edgeId?: string;
+    buildingId?: string;
+    wx: number;
+    wy: number;
+  } | null>(null);
+  // Панорама: сдвиг вида относительно базового viewBox.
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Drag объекта: kind + откуда тащим + старт курсора + текущая точка (превью).
+  const [drag, setDrag] = useState<{
+    kind: 'node' | 'building' | 'amenity' | 'park';
+    id: string;
+    origX: number;
+    origY: number;
+    startCX: number;
+    startCY: number;
+    curX: number;
+    curY: number;
+    moved: boolean;
+  } | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const panStart = useRef<{ cx: number; cy: number; panX: number; panY: number } | null>(null);
+  const suppressClick = useRef(false);
+  // Зеркало drag и колбэков для window-pointerup (коммит и вне svg).
+  const dragRef = useRef<typeof drag | null>(null);
+  dragRef.current = drag;
+  const actionsRef = useRef({ onMoveNode, onMoveBuilding, onMoveAmenity });
+  actionsRef.current = { onMoveNode, onMoveBuilding, onMoveAmenity };
 
   const nodeMap = new Map<string, GraphNode>(scenario.nodes.map((n) => [n.id, n]));
+  // Live-превью перетаскиваемого узла: все рёбра/пути/маркеры тянутся следом.
+  const dragDX = drag ? drag.curX - drag.startCX : 0;
+  const dragDY = drag ? drag.curY - drag.startCY : 0;
+  if (drag?.kind === 'node') {
+    const n = nodeMap.get(drag.id);
+    if (n) nodeMap.set(drag.id, { ...n, x: n.x + dragDX, y: n.y + dragDY });
+  }
   const roadEdges = scenario.edges.filter((e) => e.type === 'road');
 
   // Радиус подложки стыка: половина ширины самой широкой примыкающей дороги.
@@ -117,15 +177,206 @@ export default function DistrictMap({
     return { x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10 };
   };
 
-  const getSvgCoordinates = (e: ReactMouseEvent<SVGSVGElement>): { x: number; y: number } => {
-    const svg = e.currentTarget;
+  // Базовый вид: дефолт 960×620 + авто-расширение под контент с полями.
+  // Карта динамически растёт, когда здания/узлы подходят к краю.
+  const baseView = useMemo(() => {
+    const M = 90;
+    const xs: number[] = [0, 960];
+    const ys: number[] = [0, 620];
+    for (const n of scenario.nodes) {
+      xs.push(n.x);
+      ys.push(n.y);
+    }
+    for (const b of scenario.buildings) {
+      if (b.polygon && b.polygon.length >= 3) {
+        for (const p of b.polygon) {
+          xs.push(p.x);
+          ys.push(p.y);
+        }
+      } else {
+        xs.push(b.x, b.x + b.width);
+        ys.push(b.y, b.y + b.height);
+      }
+    }
+    for (const a of scenario.amenities) {
+      if (a.polygon && a.polygon.length >= 3) {
+        for (const p of a.polygon) {
+          xs.push(p.x);
+          ys.push(p.y);
+        }
+      }
+    }
+    const minX = Math.min(...xs) - M;
+    const minY = Math.min(...ys) - M;
+    const maxX = Math.max(...xs) + M;
+    const maxY = Math.max(...ys) + M;
+    return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+  }, [scenario.nodes, scenario.buildings, scenario.amenities]);
+
+  const viewBoxStr = `${baseView.x + pan.x} ${baseView.y + pan.y} ${baseView.w} ${baseView.h}`;
+
+  // Мировые координаты без снапа (для drag и панорамы).
+  const toWorldRaw = (clientX: number, clientY: number): { x: number; y: number } => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 960;
-    const y = ((e.clientY - rect.top) / rect.height) * 620;
+    return {
+      x: baseView.x + pan.x + ((clientX - rect.left) / rect.width) * baseView.w,
+      y: baseView.y + pan.y + ((clientY - rect.top) / rect.height) * baseView.h,
+    };
+  };
+
+  const getSvgCoordinates = (e: ReactMouseEvent<SVGSVGElement>): { x: number; y: number } => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = baseView.x + pan.x + ((e.clientX - rect.left) / rect.width) * baseView.w;
+    const y = baseView.y + pan.y + ((e.clientY - rect.top) / rect.height) * baseView.h;
     return snapToNode(x, y);
   };
 
+  // Старт drag объекта (только select, левая кнопка, не кольцо).
+  const beginObjectDrag = (
+    e: ReactPointerEvent<SVGGElement>,
+    kind: 'node' | 'building' | 'amenity' | 'park',
+    id: string,
+    origX: number,
+    origY: number,
+  ) => {
+    if (toolMode !== 'select' || e.button !== 0) return;
+    e.stopPropagation();
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
+    const w = toWorldRaw(e.clientX, e.clientY);
+    setDrag({ kind, id, origX, origY, startCX: w.x, startCY: w.y, curX: w.x, curY: w.y, moved: false });
+  };
+
+  // Long-press для тачскринов (у них нет ПКМ): удержание 550мс
+  // открывает то же контекстное меню. Мышь игнорируем — у неё есть ПКМ.
+  const longPressTimer = useRef<number | null>(null);
+  const lpStart = useRef<{ cx: number; cy: number } | null>(null);
+  const cancelLongPress = () => {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    lpStart.current = null;
+  };
+  const beginLongPress = (e: ReactPointerEvent, open: () => void) => {
+    if (e.pointerType === 'mouse') return;
+    cancelLongPress();
+    lpStart.current = { cx: e.clientX, cy: e.clientY };
+    longPressTimer.current = window.setTimeout(() => {
+      longPressTimer.current = null;
+      lpStart.current = null;
+      panStart.current = null;
+      suppressClick.current = true;
+      open();
+    }, 550);
+  };
+  const handleSvgPointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    // Фон тащится мышью в ЛЮБОМ режиме (все инструменты — кликовые,
+    // конфликта с drag нет; клик после панорамы гасится suppressClick).
+    // Объекты останавливают всплытие в beginObjectDrag.
+    if (e.button !== 0 || drag) return;
+    panStart.current = { cx: e.clientX, cy: e.clientY, panX: pan.x, panY: pan.y };
+  };
+
+  const handleSvgPointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    // Палец поехал — это пан/тап, а не удержание: long-press отменяем.
+    if (lpStart.current && Math.hypot(e.clientX - lpStart.current.cx, e.clientY - lpStart.current.cy) > 12) {
+      cancelLongPress();
+    }
+    const w = toWorldRaw(e.clientX, e.clientY);
+    setMousePos({ x: Math.round(w.x), y: Math.round(w.y) });
+    if (drag) {
+      // Drag объекта: превью следует за курсором, коммит — на pointerup.
+      // Сдвиг объекта = курсор минус стартовая точка захвата.
+      setDrag((d) => {
+        if (!d) return d;
+        return {
+          ...d,
+          curX: w.x,
+          curY: w.y,
+          moved: d.moved || Math.hypot(w.x - d.startCX, w.y - d.startCY) > 5,
+        };
+      });
+    } else if (panStart.current) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const sx = baseView.w / rect.width;
+      const sy = baseView.h / rect.height;
+      const nx = panStart.current.panX - (e.clientX - panStart.current.cx) * sx;
+      const ny = panStart.current.panY - (e.clientY - panStart.current.cy) * sy;
+      if (Math.hypot(e.clientX - panStart.current.cx, e.clientY - panStart.current.cy) > 4) {
+        suppressClick.current = true;
+      }
+      setPan({ x: nx, y: ny });
+    }
+  };
+
+  // Pointerup на svg: только конец панорамы. Коммит drag — в window-pointerup
+  // (он срабатывает всегда, включая отпускание вне карты — двойного коммита нет).
+  const handleSvgPointerUp = () => {
+    panStart.current = null;
+  };
+
+  // Escape + pointerup на уровне окна: отмена/коммит drag и панорамы даже вне svg.
+  // Клик/тап вне меню закрывает его (само меню помечено data-ctx-menu).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setDrag(null);
+        panStart.current = null;
+        setRoadStart(null);
+        setPolygonDraft([]);
+        setContextMenu(null);
+        cancelLongPress();
+      }
+    };
+    const onDown = (e: PointerEvent) => {
+      if (!(e.target as Element).closest?.('[data-ctx-menu]')) setContextMenu(null);
+    };
+    const onUp = () => {
+      cancelLongPress();
+      const d = dragRef.current;
+      if (d?.moved) {
+        suppressClick.current = true;
+        const nx = d.origX + (d.curX - d.startCX);
+        const ny = d.origY + (d.curY - d.startCY);
+        const acts = actionsRef.current;
+        if (d.kind === 'node') acts.onMoveNode(d.id, Math.round(nx / 10) * 10, Math.round(ny / 10) * 10);
+        else if (d.kind === 'building') acts.onMoveBuilding(d.id, Math.round(nx / 10) * 10, Math.round(ny / 10) * 10);
+        else acts.onMoveAmenity(d.id, Math.round(nx), Math.round(ny));
+      } else if (d) {
+        suppressClick.current = false;
+      }
+      if (d) setDrag(null);
+      panStart.current = null;
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointerdown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointerdown', onDown);
+    };
+  }, []);
+
+  // Клик после drag/панорамы — глушим (объекты останавливают всплытие,
+  // поэтому проверяют флаг сами).
+  const consumeSuppressedClick = (): boolean => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return true;
+    }
+    return false;
+  };
+
   const handleSvgClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
     if (contextMenu) setContextMenu(null);
     const coords = getSvgCoordinates(e);
 
@@ -138,8 +389,7 @@ export default function DistrictMap({
         }
         setRoadStart(null);
       }
-    } else if (toolMode === 'poly_building' || toolMode === 'poly_park') {
-      if (polygonDraft.length >= 3) {
+    } else if (toolMode === 'poly_building' || toolMode === 'poly_park') {      if (polygonDraft.length >= 3) {
         const first = polygonDraft[0];
         if (Math.hypot(first.x - coords.x, first.y - coords.y) <= 22) {
           if (toolMode === 'poly_building') onAddPolyBuilding(polygonDraft);
@@ -155,11 +405,43 @@ export default function DistrictMap({
     }
   };
 
-  const handleContextMenu = (e: ReactMouseEvent, edgeId: string) => {
+  // ПКМ-меню: у дороги и дома разный набор (остановка vs теги).
+  const openEdgeMenu = (clientX: number, clientY: number, edgeId: string) => {
+    const w = toWorldRaw(clientX, clientY);
+    setContextMenu({
+      kind: 'edge',
+      x: clientX,
+      y: clientY,
+      edgeId,
+      wx: Math.round(w.x),
+      wy: Math.round(w.y),
+    });
+    onSelectEdge(edgeId);
+  };
+
+  const openBuildingMenu = (clientX: number, clientY: number, buildingId: string) => {
+    const w = toWorldRaw(clientX, clientY);
+    setContextMenu({
+      kind: 'building',
+      x: clientX,
+      y: clientY,
+      buildingId,
+      wx: Math.round(w.x),
+      wy: Math.round(w.y),
+    });
+    onSelectBuilding(buildingId);
+  };
+
+  const handleEdgeContextMenu = (e: ReactMouseEvent, edgeId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, edgeId });
-    onSelectEdge(edgeId);
+    openEdgeMenu(e.clientX, e.clientY, edgeId);
+  };
+
+  const handleBuildingContextMenu = (e: ReactMouseEvent, buildingId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openBuildingMenu(e.clientX, e.clientY, buildingId);
   };
 
   const handleEdgeClick = (
@@ -168,6 +450,11 @@ export default function DistrictMap({
     from: GraphNode,
     to: GraphNode,
   ) => {
+    if (consumeSuppressedClick()) {
+      e.stopPropagation();
+      return;
+    }
+    if (contextMenu) setContextMenu(null);
     const isCarRoad = edge.type === 'road';
     if (toolMode === 'block_spot') {
       e.stopPropagation();
@@ -197,11 +484,18 @@ export default function DistrictMap({
   );
 
   const roundaboutCenters = scenario.nodes.filter((n) => n.type === 'roundabout');
-  const menuEdge = contextMenu ? scenario.edges.find((e) => e.id === contextMenu.edgeId) : undefined;
+  const menuEdge =
+    contextMenu?.kind === 'edge' && contextMenu.edgeId
+      ? scenario.edges.find((e) => e.id === contextMenu.edgeId)
+      : undefined;
   const menuEdgeNodes =
     menuEdge && nodeMap.get(menuEdge.from) && nodeMap.get(menuEdge.to)
       ? { from: nodeMap.get(menuEdge.from)!, to: nodeMap.get(menuEdge.to)! }
       : null;
+  const menuBuilding =
+    contextMenu?.kind === 'building' && contextMenu.buildingId
+      ? scenario.buildings.find((b) => b.id === contextMenu.buildingId)
+      : undefined;
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-[#1e2430] shadow-xl">
@@ -210,7 +504,7 @@ export default function DistrictMap({
           <span className="text-gray-400">МАСШТАБ: 1ед = 1м</span>
           <span className="text-blue-400 font-semibold uppercase">
             РЕЖИМ: {
-              toolMode === 'select' ? 'ВЫБОР (ПКМ — МЕНЮ • КЛИК ПО УЗЛУ — КОЛЬЦО)' :
+              toolMode === 'select' ? 'ВЫБОР (ТАЩИ ОБЪЕКТ • ФОН — ПАНОРАМА • ПКМ — МЕНЮ)' :
               toolMode === 'road' ? 'ТРАССИРОВКА УДС' :
               toolMode === 'sidewalk' ? 'ТРОТУАР' :
               toolMode === 'crossing' ? 'НАЗЕМНЫЙ ПЕРЕХОД' :
@@ -228,11 +522,18 @@ export default function DistrictMap({
       </div>
 
       <svg
-        viewBox="0 0 960 620"
-        className="h-auto w-full cursor-crosshair select-none"
-        style={{ minHeight: '520px' }}
+        ref={svgRef}
+        viewBox={viewBoxStr}
+        className="h-auto w-full select-none"
+        style={{ minHeight: '520px', cursor: toolMode === 'select' ? (drag ? 'grabbing' : 'grab') : 'crosshair', touchAction: 'none' }}
         onClick={handleSvgClick}
         onMouseMove={(e) => setMousePos(getSvgCoordinates(e))}
+        onPointerDown={handleSvgPointerDown}
+        onPointerMove={handleSvgPointerMove}
+        onPointerUp={handleSvgPointerUp}
+        onPointerLeave={() => {
+          if (!drag && !panStart.current) mousePos && setMousePos(null);
+        }}
         role="img"
         aria-label="САПР чертёж района"
       >
@@ -246,30 +547,43 @@ export default function DistrictMap({
           </pattern>
         </defs>
 
-        <rect width="960" height="620" fill="#141822" />
-        <rect width="960" height="620" fill="url(#cad-grid-lg)" />
+        <rect x={baseView.x + pan.x} y={baseView.y + pan.y} width={baseView.w} height={baseView.h} fill="#141822" />
+        <rect x={baseView.x + pan.x} y={baseView.y + pan.y} width={baseView.w} height={baseView.h} fill="url(#cad-grid-lg)" />
 
-        {/* Парки */}
+        {/* Парки: полигон тянется в select, точка — за маркер */}
         {scenario.amenities
           .filter((a) => a.type === 'park')
           .map((park) => {
             const node = nodeMap.get(park.nodeId);
             if (park.polygon && park.polygon.length >= 3) {
-              const pts = park.polygon.map((p) => `${p.x},${p.y}`).join(' ');
+              const isDragged = drag?.kind === 'park' && drag.id === park.id;
+              const shifted = isDragged ? park.polygon.map((p) => ({ x: p.x + dragDX, y: p.y + dragDY })) : park.polygon;
+              const pts = shifted.map((p) => `${p.x},${p.y}`).join(' ');
               return (
-                <g key={park.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(park.id)}>
+                <g
+                  key={park.id}
+                  onPointerDown={(e) => beginObjectDrag(e, 'park', park.id, park.polygon![0].x, park.polygon![0].y)}
+                  onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete') onDeleteAmenity(park.id); }}
+                >
                   <polygon points={pts} fill="#143828" stroke="#2d6a4f" strokeWidth="2" strokeDasharray="4 2" />
-                  <text x={park.polygon[0].x} y={park.polygon[0].y + 14} fill="#a7f3d0" fontSize="9" fontFamily="monospace">
+                  <text x={shifted[0].x} y={shifted[0].y + 14} fill="#a7f3d0" fontSize="9" fontFamily="monospace">
                     {park.name}
                   </text>
                 </g>
               );
             }
             if (!node) return null;
+            const isDraggedPt = drag?.kind === 'amenity' && drag.id === park.id;
+            const ccx = node.x + (isDraggedPt ? dragDX : 0);
+            const ccy = node.y + (isDraggedPt ? dragDY : 0);
             return (
-              <g key={park.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(park.id)}>
-                <circle cx={node.x} cy={node.y} r="48" fill="#143828" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
-                <text x={node.x} y={node.y + 4} textAnchor="middle" fill="#a7f3d0" fontSize="9" fontFamily="monospace" fontWeight="700">
+              <g
+                key={park.id}
+                onPointerDown={(e) => beginObjectDrag(e, 'amenity', park.id, node.x, node.y)}
+                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (toolMode === 'delete') onDeleteAmenity(park.id); }}
+              >
+                <circle cx={ccx} cy={ccy} r="48" fill="#143828" stroke="#2d6a4f" strokeWidth="1.5" strokeDasharray="4 2" />
+                <text x={ccx} y={ccy + 4} textAnchor="middle" fill="#a7f3d0" fontSize="9" fontFamily="monospace" fontWeight="700">
                   {park.name}
                 </text>
               </g>
@@ -427,23 +741,34 @@ export default function DistrictMap({
           );
         })}
 
-        {/* Наземные зебры */}
+        {/* Наземные зебры: тёмная подложка-кайма + белый пунктир поверх,
+            рисуются после подложек перекрёстков — концы не тонут под падами */}
         {scenario.edges.map((edge) => {
           if (edge.type !== 'crossing') return null;
           const from = nodeMap.get(edge.from);
           const to = nodeMap.get(edge.to);
           if (!from || !to) return null;
           return (
-            <line
-              key={edge.id}
-              x1={from.x}
-              y1={from.y}
-              x2={to.x}
-              y2={to.y}
-              stroke="#ffffff"
-              strokeWidth={12}
-              strokeDasharray="4 5"
-            />
+            <g key={edge.id}>
+              <line
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke={ROAD_CASING}
+                strokeWidth={18}
+                strokeLinecap="round"
+              />
+              <line
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke="#ffffff"
+                strokeWidth={11}
+                strokeDasharray="4 5"
+              />
+            </g>
           );
         })}
 
@@ -509,7 +834,8 @@ export default function DistrictMap({
             <g
               key={`hit-${edge.id}`}
               className="cursor-pointer"
-              onContextMenu={(e) => handleContextMenu(e, edge.id)}
+              onContextMenu={(e) => handleEdgeContextMenu(e, edge.id)}
+              onPointerDown={(e) => beginLongPress(e, () => openEdgeMenu(e.clientX, e.clientY, edge.id))}
               onClick={(e) => handleEdgeClick(e, edge, from, to)}
             >
               {isBlocked && (
@@ -541,52 +867,152 @@ export default function DistrictMap({
           <line x1={roadStart.x} y1={roadStart.y} x2={mousePos.x} y2={mousePos.y} stroke="#60a5fa" strokeWidth={14} strokeDasharray="6 4" />
         )}
 
-        {/* Дома */}
+        {/* Дома: в select тянутся мышью (превью со сдвигом), иначе клик — выбор/снов */}
         {scenario.buildings.map((b: Building) => {
           const isSelected = selectedBuildingId === b.id;
+          const isDragged = drag?.kind === 'building' && drag.id === b.id;
           if (b.polygon && b.polygon.length >= 3) {
-            const pts = b.polygon.map((p) => `${p.x},${p.y}`).join(' ');
+            const shifted = isDragged ? b.polygon.map((p) => ({ x: p.x + dragDX, y: p.y + dragDY })) : b.polygon;
+            const pts = shifted.map((p) => `${p.x},${p.y}`).join(' ');
             return (
-              <g key={b.id} onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}>
+              <g
+                key={b.id}
+                onPointerDown={(e) => { beginObjectDrag(e, 'building', b.id, b.polygon![0].x, b.polygon![0].y); beginLongPress(e, () => openBuildingMenu(e.clientX, e.clientY, b.id)); }}
+                onContextMenu={(e) => handleBuildingContextMenu(e, b.id)}
+                onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
+              >
                 <polygon points={pts} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth="2" />
-                <text x={b.polygon[0].x + 10} y={b.polygon[0].y + 16} fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
+                <text x={shifted[0].x + 10} y={shifted[0].y + 16} fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                   {b.name} ({b.residents} чел)
                 </text>
+                {b.tag && (
+                  <g>
+                    <rect x={shifted[0].x - 11} y={shifted[0].y - 11} width={22} height={22} rx={6} fill={TAG_BADGE[b.tag].fill} stroke="#ffffff" strokeWidth="1.5" />
+                    <text x={shifted[0].x} y={shifted[0].y + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
+                      {TAG_BADGE[b.tag].letter}
+                    </text>
+                    <title>{BUILDING_TAG_LABEL[b.tag]}</title>
+                  </g>
+                )}
               </g>
             );
           }
-          const cx = b.x + b.width / 2;
-          const cy = b.y + b.height / 2;
+          const bx = isDragged ? b.x + dragDX : b.x;
+          const by = isDragged ? b.y + dragDY : b.y;
+          const cx = bx + b.width / 2;
+          const cy = by + b.height / 2;
           return (
             <g
               key={b.id}
               transform={b.rotationDeg ? `rotate(${b.rotationDeg} ${cx} ${cy})` : undefined}
-              onClick={(e) => { e.stopPropagation(); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
+              onPointerDown={(e) => { beginObjectDrag(e, 'building', b.id, b.x, b.y); beginLongPress(e, () => openBuildingMenu(e.clientX, e.clientY, b.id)); }}
+              onContextMenu={(e) => handleBuildingContextMenu(e, b.id)}
+              onClick={(e) => { e.stopPropagation(); if (consumeSuppressedClick()) return; if (contextMenu) setContextMenu(null); toolMode === 'delete' ? onDeleteBuilding(b.id) : onSelectBuilding(b.id); }}
             >
-              <rect x={b.x} y={b.y} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
+              <rect x={bx} y={by} width={b.width} height={b.height} rx={8} fill={isSelected ? '#1e3a8a' : '#1e293b'} stroke={isSelected ? '#60a5fa' : '#475569'} strokeWidth={isSelected ? 2.5 : 1} />
               <text x={cx} y={cy + 3} textAnchor="middle" fill="#f8fafc" fontSize="9" fontFamily="monospace" fontWeight="700">
                 {b.name}
               </text>
+              {b.tag && (
+                <g>
+                  <rect x={bx - 11} y={by - 11} width={22} height={22} rx={6} fill={TAG_BADGE[b.tag].fill} stroke="#ffffff" strokeWidth="1.5" />
+                  <text x={bx} y={by - 7.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
+                    {TAG_BADGE[b.tag].letter}
+                  </text>
+                  <title>{BUILDING_TAG_LABEL[b.tag]}</title>
+                </g>
+              )}
             </g>
           );
         })}
 
-        {/* Остановки */}
+        {/* Остановки: маркер со сдвигом от центра узла + поводок,
+            чтобы не перекрывать зебру и подложку перекрёстка.
+            В select маркер тянется мышью (привязка к ближайшему узлу). */}
         {scenario.amenities.filter((a) => a.type === 'bus_stop').map((bus) => {
           const n = nodeMap.get(bus.nodeId);
           if (!n) return null;
+          const isDragged = drag?.kind === 'amenity' && drag.id === bus.id;
+          const mx = n.x + 18 + (isDragged ? dragDX : 0);
+          const my = n.y - 18 + (isDragged ? dragDY : 0);
           return (
-            <g key={bus.id} onClick={() => toolMode === 'delete' && onDeleteAmenity(bus.id)}>
-              <circle cx={n.x} cy={n.y} r="11" fill="#2563eb" stroke="#ffffff" strokeWidth="1.5" />
-              <text x={n.x} y={n.y + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
+            <g
+              key={bus.id}
+              onPointerDown={(e) => beginObjectDrag(e, 'amenity', bus.id, n.x + 18, n.y - 18)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (consumeSuppressedClick()) return;
+                if (toolMode === 'delete') onDeleteAmenity(bus.id);
+              }}
+            >
+              <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#93c5fd" strokeWidth={1.5} />
+              <circle cx={mx} cy={my} r="11" fill="#2563eb" stroke="#ffffff" strokeWidth="1.5" />
+              <text x={mx} y={my + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
                 А
               </text>
+              <title>{bus.name}</title>
             </g>
           );
         })}
 
-        {/* Узлы (клик в режиме выбора — построить кольцо) */}
+        {/* Школы: янтарный маркер со сдвигом (в select тянется мышью) */}
+        {scenario.amenities.filter((a) => a.type === 'school').map((school) => {
+          const n = nodeMap.get(school.nodeId);
+          if (!n) return null;
+          const isDragged = drag?.kind === 'amenity' && drag.id === school.id;
+          const mx = n.x + 20 + (isDragged ? dragDX : 0);
+          const my = n.y - 20 + (isDragged ? dragDY : 0);
+          return (
+            <g
+              key={school.id}
+              onPointerDown={(e) => beginObjectDrag(e, 'amenity', school.id, n.x + 20, n.y - 20)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (consumeSuppressedClick()) return;
+                if (toolMode === 'delete') onDeleteAmenity(school.id);
+              }}
+            >
+              <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#fcd34d" strokeWidth={1.5} />
+              <rect x={mx - 11} y={my - 11} width={22} height={22} rx={6} fill="#d97706" stroke="#ffffff" strokeWidth="1.5" />
+              <text x={mx} y={my + 3.5} textAnchor="middle" fill="#ffffff" fontSize="9" fontFamily="monospace" fontWeight="900">
+                Ш
+              </text>
+              <title>{school.name}</title>
+            </g>
+          );
+        })}
+
+        {/* Прочие притяжения (ТЦ): серый маркер со сдвигом (в select тянется) */}
+        {scenario.amenities.filter((a) => a.type === 'mall').map((mall) => {
+          const n = nodeMap.get(mall.nodeId);
+          if (!n) return null;
+          const isDragged = drag?.kind === 'amenity' && drag.id === mall.id;
+          const mx = n.x + 18 + (isDragged ? dragDX : 0);
+          const my = n.y + 18 + (isDragged ? dragDY : 0);
+          return (
+            <g
+              key={mall.id}
+              onPointerDown={(e) => beginObjectDrag(e, 'amenity', mall.id, n.x + 18, n.y + 18)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (consumeSuppressedClick()) return;
+                if (toolMode === 'delete') onDeleteAmenity(mall.id);
+              }}
+            >
+              <line x1={n.x} y1={n.y} x2={mx} y2={my} stroke="#cbd5e1" strokeWidth={1.5} />
+              <circle cx={mx} cy={my} r="10" fill="#475569" stroke="#ffffff" strokeWidth="1.5" />
+              <text x={mx} y={my + 3.5} textAnchor="middle" fill="#ffffff" fontSize="8" fontFamily="monospace" fontWeight="900">
+                ТЦ
+              </text>
+              <title>{mall.name}</title>
+            </g>
+          );
+        })}
+
+        {/* Узлы: в select тянутся мышью (кроме кольца),
+            клик по подходящему — построить кольцо */}
         {scenario.nodes.map((node) => {
+          const rendered = nodeMap.get(node.id) ?? node;
           const roadCount =
             toolMode === 'select' && node.type !== 'roundabout' && !node.isRoundabout
               ? scenario.edges.filter(
@@ -598,12 +1024,13 @@ export default function DistrictMap({
                 ).length
               : 0;
           const canRing = roadCount >= 3;
+          const locked = node.type === 'roundabout' || node.isRoundabout;
           return (
             <g key={node.id}>
               {canRing && (
                 <circle
-                  cx={node.x}
-                  cy={node.y}
+                  cx={rendered.x}
+                  cy={rendered.y}
                   r={10}
                   fill="none"
                   stroke="#f59e0b"
@@ -612,13 +1039,19 @@ export default function DistrictMap({
                 />
               )}
               <circle
-                cx={node.x}
-                cy={node.y}
+                cx={rendered.x}
+                cy={rendered.y}
                 r={node.type === 'roundabout' ? 14 : node.isRoundabout ? 2.5 : 3}
                 fill={node.type === 'roundabout' ? '#1e3a8a' : canRing ? '#f59e0b' : '#64748b'}
+                style={{ cursor: toolMode === 'select' && !locked ? 'move' : undefined }}
+                onPointerDown={(e) => {
+                  if (locked) return;
+                  beginObjectDrag(e, 'node', node.id, node.x, node.y);
+                }}
                 onClick={(e) => {
                   if (toolMode !== 'select') return;
                   e.stopPropagation();
+                  if (consumeSuppressedClick()) return;
                   onMakeRoundabout(node.id);
                 }}
               >
@@ -629,16 +1062,20 @@ export default function DistrictMap({
         })}
       </svg>
 
-      {contextMenu && menuEdge && menuEdgeNodes && (
+      {contextMenu?.kind === 'edge' && menuEdge && menuEdgeNodes && (
         <DistrictContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          edgeId={contextMenu.edgeId}
+          edgeId={menuEdge.id}
           lanesLabel={menuEdge.type === 'road' ? `${menuEdge.lanes ?? 2}` : '—'}
           isRing={isRingEdge(menuEdge)}
+          showBusStop={menuEdge.type === 'road' && !isRingEdge(menuEdge)}
           onUpgradeLanes={onUpgradeLanes}
           onToggleSidewalk={onToggleSidewalk}
           onDeleteEdge={onDeleteEdge}
+          onBuildBusStop={() => {
+            onAddBusStopOnEdge(menuEdge.id, contextMenu.wx, contextMenu.wy);
+          }}
           onBuildCrossing={(isUnderpass) => {
             onAddCrossingDirect(
               menuEdge.id,
@@ -646,6 +1083,22 @@ export default function DistrictMap({
               Math.round((menuEdgeNodes.from.y + menuEdgeNodes.to.y) / 2),
               isUnderpass,
             );
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {contextMenu?.kind === 'building' && menuBuilding && (
+        <BuildingContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          buildingName={menuBuilding.name}
+          currentTag={menuBuilding.tag ?? null}
+          onSetTag={(tag) => {
+            onSetBuildingTag(menuBuilding.id, tag);
+          }}
+          onDeleteBuilding={() => {
+            onDeleteBuilding(menuBuilding.id);
           }}
           onClose={() => setContextMenu(null)}
         />

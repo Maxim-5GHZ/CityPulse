@@ -6,16 +6,18 @@ interface DistrictContextMenuProps {
   edgeId: string;
   lanesLabel: string;
   isRing: boolean;
+  showBusStop: boolean;
   onUpgradeLanes: (edgeId: string) => void;
   onToggleSidewalk: (edgeId: string, side: 'left' | 'right') => void;
   onDeleteEdge: (edgeId: string) => void;
+  onBuildBusStop: () => void;
   onBuildCrossing: (isUnderpass: boolean) => void;
   onClose: () => void;
 }
 
 // Кламп к экрану: меню не улетает за пределы вьюпорта (включая мобильные).
 const MENU_W = 240;
-const MENU_H = 340;
+const MENU_H = 380;
 
 export default function DistrictContextMenu({
   x,
@@ -23,9 +25,11 @@ export default function DistrictContextMenu({
   edgeId,
   lanesLabel,
   isRing,
+  showBusStop,
   onUpgradeLanes,
   onToggleSidewalk,
   onDeleteEdge,
+  onBuildBusStop,
   onBuildCrossing,
   onClose,
 }: DistrictContextMenuProps) {
@@ -41,6 +45,7 @@ export default function DistrictContextMenu({
 
   return (
     <div
+      data-ctx-menu
       className="fixed z-50 min-w-[220px] rounded-2xl border border-white/60 bg-white/70 p-1.5 text-xs font-medium text-gray-800 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_18px_40px_-12px_rgba(20,26,38,0.35)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/20 dark:bg-gray-900/70 dark:text-gray-100"
       style={{ top, left }}
       onClick={(e) => e.stopPropagation()}
@@ -65,6 +70,18 @@ export default function DistrictContextMenu({
           >
             ↔ Переключить 2 / 4 полосы
           </button>
+          {showBusStop && (
+            <button
+              type="button"
+              className={itemCls}
+              onClick={() => {
+                onBuildBusStop();
+                onClose();
+              }}
+            >
+              🚏 Остановка здесь
+            </button>
+          )}
           <button
             type="button"
             className={itemCls}

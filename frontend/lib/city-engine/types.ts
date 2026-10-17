@@ -43,7 +43,24 @@ export interface Building {
   polygon?: { x: number; y: number }[]; // Произвольный полигональный контур
   rotationDeg?: number; // Поворот корпуса вдоль улицы (органичная застройка)
   isCustom?: boolean;
+  // Социальный тег корпуса (назначается через ПКМ-меню дома).
+  // Тег превращает корпус в точку обслуживания: участвует в покрытии
+  // (Дейкстра от gateNodeId, радиус 500) и стоит денег (INFRA_COSTS.tag_*).
+  tag?: BuildingTag;
+  tagCustom?: boolean; // Тег назначен пользователем (а не пришёл из сейва)
 }
+
+// Социальный тег корпуса: назначается ПКМ по дому, снимается пунктом «Жилой».
+export type BuildingTag = 'school' | 'police' | 'hospital' | 'shop';
+
+export const BUILDING_TAG_LABEL: Record<BuildingTag, string> = {
+  school: 'Школа',
+  police: 'Полиция',
+  hospital: 'Больница',
+  shop: 'Магазин',
+};
+
+export const BUILDING_TAGS: BuildingTag[] = ['school', 'police', 'hospital', 'shop'];
 
 export type AmenityType = 'bus_stop' | 'park' | 'mall' | 'school';
 
@@ -85,14 +102,34 @@ export interface CriticalBottleneck {
 export interface DistrictMetrics {
   weightedAvgBusDistM: number;
   weightedAvgBusTimeMin: number;
+  medianBusDistM: number;
+  p90BusDistM: number;
   parkAccessPercent: number;
   parkCoveredResidents: number;
+  schoolAccessPercent: number;
+  schoolCoveredResidents: number;
+  policeAccessPercent: number;
+  policeCoveredResidents: number;
+  hospitalAccessPercent: number;
+  hospitalCoveredResidents: number;
+  shopAccessPercent: number;
+  shopCoveredResidents: number;
+  avgDetourIndex: number;
+  iso5BusPercent: number;
+  iso10BusPercent: number;
+  greenM2PerResident: number;
+  bikeAccessPercent: number;
   totalResidents: number;
   mobilityIndex: number;
   budgetSpentRub: number;
   budgetLimitRub: number;
+  costPerCapitaRub: number;
   busPaths: Record<string, PathResult | null>;
   parkPaths: Record<string, PathResult | null>;
+  schoolPaths: Record<string, PathResult | null>;
+  policePaths: Record<string, PathResult | null>;
+  hospitalPaths: Record<string, PathResult | null>;
+  shopPaths: Record<string, PathResult | null>;
   edgeLoads: Record<string, number>;
   bottlenecks: CriticalBottleneck[];
 }

@@ -404,6 +404,47 @@ export default function DistrictMap3D({
       group.add(pavilion);
     });
 
+    // Школы из старых сейвов (отдельно стоящие) — янтарный корпус.
+    scenario.amenities.filter((a) => a.type === 'school').forEach((school) => {
+      const node = nodeMap.get(school.nodeId);
+      if (!node) return;
+      const [sx, sz] = to3D(node.x, node.y);
+      const block = new THREE.Mesh(
+        new THREE.BoxGeometry(14, 7, 8),
+        new THREE.MeshLambertMaterial({ color: 0xd97706 }),
+      );
+      block.position.set(sx, 3.5, sz);
+      group.add(block);
+    });
+
+    // Теги корпусов (ПКМ по дому): цветной маяк на крыше, цвет — как бейдж в 2D.
+    const TAG_COLOR_3D: Record<string, number> = {
+      school: 0xd97706,
+      police: 0x2563eb,
+      hospital: 0x334155,
+      shop: 0x64748b,
+    };
+    scenario.buildings.forEach((b) => {
+      if (!b.tag) return;
+      const h = Math.max(12, b.floors * 4.2);
+      let cx: number;
+      let cy: number;
+      if (b.polygon && b.polygon.length >= 3) {
+        cx = b.polygon.reduce((s, p) => s + p.x, 0) / b.polygon.length;
+        cy = b.polygon.reduce((s, p) => s + p.y, 0) / b.polygon.length;
+      } else {
+        cx = b.x + b.width / 2;
+        cy = b.y + b.height / 2;
+      }
+      const [sx, sz] = to3D(cx, cy);
+      const beacon = new THREE.Mesh(
+        new THREE.BoxGeometry(6, 3, 6),
+        new THREE.MeshLambertMaterial({ color: TAG_COLOR_3D[b.tag] ?? 0x64748b }),
+      );
+      beacon.position.set(sx, h + 1.5, sz);
+      group.add(beacon);
+    });
+
     // Здания-призмы Digital Twin: полупрозрачный корпус + светящийся контур.
     scenario.buildings.forEach((b) => {
       const isSelected = b.id === selectedBuildingId;

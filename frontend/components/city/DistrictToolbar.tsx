@@ -13,7 +13,6 @@ interface DistrictToolbarProps {
   onViewModeChange: (mode: '2d' | '3d') => void;
   toolMode: ToolMode;
   onToolModeChange: (mode: ToolMode) => void;
-  onLoadPreset: () => void;
   onClear: () => void;
   onOpenProjects: () => void;
   onSaveProject: () => void;
@@ -38,7 +37,6 @@ export default function DistrictToolbar({
   onViewModeChange,
   toolMode,
   onToolModeChange,
-  onLoadPreset,
   onClear,
   onOpenProjects,
   onSaveProject,
@@ -68,9 +66,6 @@ export default function DistrictToolbar({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <button type="button" onClick={onLoadPreset} className={cadBtn}>
-            Обнинск-51
-          </button>
           <button type="button" onClick={onClear} className={cadBtn}>
             Очистить
           </button>

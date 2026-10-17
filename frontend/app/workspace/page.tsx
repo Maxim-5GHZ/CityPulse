@@ -10,11 +10,11 @@ import DistrictMap, { ToolMode } from '@/components/city/DistrictMap';
 import DistrictToolbar from '@/components/city/DistrictToolbar';
 import DistrictSidebar from '@/components/city/DistrictSidebar';
 import ProjectsModal from '@/components/city/ProjectsModal';
-import { EMPTY_DISTRICT, OBNINSK_2040_DISTRICT } from '@/lib/city-engine/presets';
+import { EMPTY_DISTRICT } from '@/lib/city-engine/presets';
 import { calculateMetrics } from '@/lib/city-engine/metrics';
-import { computePolygonAreaM2, findClosestNodeId } from '@/lib/city-engine/geometry';
+import { computePolygonAreaM2, findClosestNodeId, splitEdgeAt } from '@/lib/city-engine/geometry';
 import { planRoundabout, isRingEdge } from '@/lib/city-engine/roundabout';
-import { DistrictScenario, Building, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
+import { DistrictScenario, Building, BuildingTag, BUILDING_TAG_LABEL, GraphEdge, GraphNode, Amenity } from '@/lib/city-engine/types';
 import { listProjects, createProject, updateProject, getProject, ProjectSummary } from '@/lib/projectApi';
 
 // Deck.gl держит WebGL-контекст — только динамический импорт без SSR.
@@ -31,10 +31,10 @@ export default function WorkspacePage() {
   const { ready, token } = useAuth();
   const router = useRouter();
 
-  // Вход — сразу в район: жюри видит схему, а не пустой холст.
-  const [baseScenario, setBaseScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
-  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
-  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>('ob51-b3');
+  // Старт — с пустого холста: пресет Обнинск-51 удалён, район строится с нуля.
+  const [baseScenario, setBaseScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
+  const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(EMPTY_DISTRICT);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
@@ -181,6 +181,132 @@ export default function WorkspacePage() {
       return { ...prev, amenities: [...prev.amenities, newAmenity] };
     });
     setToolMode('select');
+  };
+
+  // Остановка в любом месте дороги (ПКМ-меню участка): разрез ребра
+  // в точке клика + остановка на узле разреза. Клик в торец — встанет
+  // на существующий узел без разреза. Кольцо резать нельзя.
+  const handleAddBusStopOnEdge = (edgeId: string, px: number, py: number) => {
+    setCurrentScenario((prev) => {
+      if (prev.nodes.length === 0) {
+        showHint('Сначала постройте улицу');
+        return prev;
+      }
+      const edge = prev.edges.find((e) => e.id === edgeId);
+      if (!edge) return prev;
+      if (isRingEdge(edge)) {
+        showHint('Кольцо резать нельзя');
+        return prev;
+      }
+      const cut = splitEdgeAt(prev, edgeId, px, py);
+      if (!cut) {
+        showHint('Здесь остановку не поставить');
+        return prev;
+      }
+      const count = prev.amenities.filter((a) => a.type === 'bus_stop').length + 1;
+      const stop: Amenity = {
+        id: `bus-${Date.now()}`,
+        name: `Остановка №${count}`,
+        type: 'bus_stop',
+        nodeId: cut.nodeId,
+        coverageRadiusM: 500,
+        isCustom: true,
+      };
+      showHint(`Новая остановка: ${stop.name}`);
+      return { ...cut.scenario, amenities: [...cut.scenario.amenities, stop] };
+    });
+  };
+
+  // Социальный тег корпуса (ПКМ-меню дома): школа/полиция/больница/магазин.
+  // null — снять тег (вернуть «Жилой»). Тег платный (tag_* в бюджете),
+  // корпус из сейва при этом в build_new_tower не влетает (см. tagCustom).
+  const handleSetBuildingTag = (buildingId: string, tag: BuildingTag | null) => {
+    setCurrentScenario((prev) => {
+      const b = prev.buildings.find((bb) => bb.id === buildingId);
+      if (!b) return prev;
+      if (!tag) {
+        showHint(`Тег снят: ${b.name} — снова жилой`);
+        return {
+          ...prev,
+          buildings: prev.buildings.map((bb) =>
+            bb.id === buildingId ? { ...bb, tag: undefined, tagCustom: undefined } : bb,
+          ),
+        };
+      }
+      showHint(`${BUILDING_TAG_LABEL[tag]}: ${b.name}`);
+      return {
+        ...prev,
+        buildings: prev.buildings.map((bb) =>
+          bb.id === buildingId ? { ...bb, tag, tagCustom: true } : bb,
+        ),
+      };
+    });
+    setSelectedBuildingId(buildingId);
+  };
+
+  // --- Перемещение объектов мышью (drag-and-drop в режиме «Выбор») ---
+  const handleMoveNode = (id: string, x: number, y: number) => {
+    setCurrentScenario((prev) => {
+      const node = prev.nodes.find((n) => n.id === id);
+      if (!node || node.isRoundabout || node.type === 'roundabout') {
+        showHint('Элемент кольца двигать нельзя');
+        return prev;
+      }
+      const nodes = prev.nodes.map((n) => (n.id === id ? { ...n, x, y } : n));
+      const pos = new Map(nodes.map((n) => [n.id, n] as const));
+      const edges = prev.edges.map((e) => {
+        if (e.from !== id && e.to !== id) return e;
+        const u = pos.get(e.from);
+        const v = pos.get(e.to);
+        if (!u || !v) return e;
+        return { ...e, lengthM: Math.max(5, Math.round(Math.hypot(v.x - u.x, v.y - u.y))) };
+      });
+      return { ...prev, nodes, edges };
+    });
+  };
+
+  const handleMoveBuilding = (id: string, x: number, y: number) => {
+    setCurrentScenario((prev) => {
+      const b = prev.buildings.find((bb) => bb.id === id);
+      if (!b) return prev;
+      const ox = b.polygon && b.polygon.length > 0 ? b.polygon[0].x : b.x;
+      const oy = b.polygon && b.polygon.length > 0 ? b.polygon[0].y : b.y;
+      const polygon = b.polygon?.map((p) => ({ x: p.x + (x - ox), y: p.y + (y - oy) }));
+      const nx = polygon ? polygon[0].x : x;
+      const ny = polygon ? polygon[0].y : y;
+      const gateNodeId = prev.nodes.length > 0 ? findClosestNodeId(nx, ny, prev.nodes) : b.gateNodeId;
+      return {
+        ...prev,
+        buildings: prev.buildings.map((bb) =>
+          bb.id === id ? { ...bb, x: nx, y: ny, polygon, gateNodeId } : bb,
+        ),
+      };
+    });
+  };
+
+  const handleMoveAmenity = (id: string, x: number, y: number) => {
+    setCurrentScenario((prev) => {
+      const a = prev.amenities.find((aa) => aa.id === id);
+      if (!a || prev.nodes.length === 0) return prev;
+      const targetNodeId = findClosestNodeId(x, y, prev.nodes);
+      if (a.polygon && a.polygon.length > 0) {
+        const dx = x - a.polygon[0].x;
+        const dy = y - a.polygon[0].y;
+        const polygon = a.polygon.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+        return {
+          ...prev,
+          amenities: prev.amenities.map((aa) =>
+            aa.id === id ? { ...aa, nodeId: targetNodeId, polygon, isCustom: true } : aa,
+          ),
+        };
+      }
+      return {
+        ...prev,
+        amenities: prev.amenities.map((aa) =>
+          aa.id === id ? { ...aa, nodeId: targetNodeId, isCustom: true } : aa,
+        ),
+      };
+    });
   };
 
   const handleAddCrossingDirect = (edgeId: string, px: number, py: number, isUnderpass = false) => {
@@ -402,14 +528,6 @@ export default function WorkspacePage() {
             onViewModeChange={setViewMode}
             toolMode={toolMode}
             onToolModeChange={setToolMode}
-            onLoadPreset={() => {
-              setCurrentScenario(OBNINSK_2040_DISTRICT);
-              setBaseScenario(OBNINSK_2040_DISTRICT);
-              setCurrentProjectId(null);
-              setProjectName('51-й микрорайон (Обнинск)');
-              setSelectedBuildingId('ob51-b3');
-              showHint('Загружен мастер-план Обнинска');
-            }}
             onClear={() => {
               setCurrentScenario(EMPTY_DISTRICT);
               setBaseScenario(EMPTY_DISTRICT);
@@ -469,6 +587,8 @@ export default function WorkspacePage() {
                   onAddRoad={handleAddRoad}
                   onAddPolyBuilding={handleAddPolyBuilding}
                   onAddPolyPark={handleAddPolyPark}
+                  onAddBusStopOnEdge={handleAddBusStopOnEdge}
+                  onSetBuildingTag={handleSetBuildingTag}
                   onAddCrossingDirect={handleAddCrossingDirect}
                   onSplitAndBlockSpot={handleSplitAndBlockSpot}
                   onUpgradeLanes={handleUpgradeLanes}
@@ -487,6 +607,9 @@ export default function WorkspacePage() {
                       amenities: p.amenities.filter((a) => a.id !== id),
                     }))
                   }
+                  onMoveNode={handleMoveNode}
+                  onMoveBuilding={handleMoveBuilding}
+                  onMoveAmenity={handleMoveAmenity}
                 />
               ) : (
                 <DeckCityView

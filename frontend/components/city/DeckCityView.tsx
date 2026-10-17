@@ -13,6 +13,8 @@ import { PolygonLayer, PathLayer, ScatterplotLayer, TextLayer } from '@deck.gl/l
 import {
   DistrictScenario,
   Building,
+  BuildingTag,
+  BUILDING_TAG_LABEL,
   GraphEdge,
   GraphNode,
   Amenity,
@@ -727,6 +729,45 @@ export default function DeckCityView({
       pickable: true,
     });
 
+    const schools = new ScatterplotLayer<Amenity>({
+      id: 'schools-layer',
+      data: scenario.amenities.filter((a) => a.type === 'school'),
+      getPosition: (s) => {
+        const n = nodeMap.get(s.nodeId);
+        return toWorld(n?.x ?? 0, n?.y ?? 0, Z_BUS_STOP);
+      },
+      getRadius: 12,
+      radiusMinPixels: 6,
+      getFillColor: [217, 119, 6, 255],
+      getLineColor: [255, 255, 255, 255],
+      stroked: true,
+      lineWidthMinPixels: 2,
+      pickable: true,
+    });
+
+    // Теги корпусов (ПКМ по дому): точка над калиткой корпуса, цвет — как бейдж в 2D.
+    const TAG_COLOR: Record<BuildingTag, [number, number, number, number]> = {
+      school: [217, 119, 6, 255],
+      police: [37, 99, 235, 255],
+      hospital: [51, 65, 85, 255],
+      shop: [100, 116, 139, 255],
+    };
+    const taggedBuildings = new ScatterplotLayer<Building>({
+      id: 'tagged-layer',
+      data: scenario.buildings.filter((b) => b.tag),
+      getPosition: (b) => {
+        const n = nodeMap.get(b.gateNodeId);
+        return toWorld(n?.x ?? b.x, n?.y ?? b.y, Z_BUS_STOP);
+      },
+      getRadius: 12,
+      radiusMinPixels: 6,
+      getFillColor: (b) => (b.tag ? TAG_COLOR[b.tag] : [100, 116, 139, 255]),
+      getLineColor: [255, 255, 255, 255],
+      stroked: true,
+      lineWidthMinPixels: 2,
+      pickable: true,
+    });
+
     // Подписи: дома — над крышей, объекты — над точкой, улицы — вдоль
     // своих рёбер. Кириллица — через characterSet: 'auto'.
     const labelItems: MapLabel[] = [];
@@ -736,7 +777,7 @@ export default function DeckCityView({
       const cy = fp.reduce((s, p) => s + p[1], 0) / fp.length;
       labelItems.push({
         position: toWorld(cx, cy, b.floors * 4.8 + 12),
-        text: b.name,
+        text: b.tag ? `${b.name} · ${BUILDING_TAG_LABEL[b.tag]}` : b.name,
         size: 15,
       });
     });
@@ -745,7 +786,12 @@ export default function DeckCityView({
       if (!n) return;
       labelItems.push({
         position: toWorld(n.x, n.y - 24, a.type === 'park' ? 22 : 16),
-        text: a.type === 'bus_stop' ? `Остановка · ${a.name}` : a.name,
+        text:
+          a.type === 'bus_stop'
+            ? `Остановка · ${a.name}`
+            : a.type === 'school'
+              ? `Школа · ${a.name}`
+              : a.name,
         size: 13,
       });
     });
@@ -787,6 +833,8 @@ export default function DeckCityView({
       activePath,
       buildings,
       busStops,
+      schools,
+      taggedBuildings,
       labelLayer,
     ].filter((l) => l !== null);
   }, [
