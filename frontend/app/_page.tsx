@@ -109,7 +109,7 @@ export default function PresentationPage() {
         'Интерактивный САПР и аудит пешеходной доступности на базе алгоритма Дейкстры и цифрового 3D-двойника района.',
       content: (
         <div className={`${cardCls} flex flex-col items-center gap-5`}>
-          <div className="mx-auto flex justify-center">
+          <div className="flex justify-center mx-auto">
             <PulseLogo as="span" size="lg" className="scale-150 my-2 sm:scale-[2.25] sm:my-16" />
           </div>
           <QrRow />
@@ -208,7 +208,7 @@ export default function PresentationPage() {
 
   return (
     <section
-      className="relative h-screen w-screen overflow-hidden bg-cover bg-center"
+      className="relative w-screen h-screen overflow-hidden bg-center bg-cover"
       style={{ backgroundImage: "url('/city.png')" }}
     >
       {/* Та же вуаль, что была на лендинге — стекло читается в обеих темах */}
@@ -217,7 +217,7 @@ export default function PresentationPage() {
         className="absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40 dark:from-black/60 dark:via-black/40 dark:to-black/70"
       />
 
-      <header className="absolute inset-x-0 top-0 z-30 flex h-16 items-center justify-between gap-2 px-4 sm:px-10">
+      <header className="absolute inset-x-0 top-0 z-30 flex items-center justify-between h-16 gap-2 px-4 sm:px-10">
         <button
           type="button"
           onClick={() => goToSlide(0)}
@@ -227,7 +227,7 @@ export default function PresentationPage() {
           <PulseLogo as="span" size="lg" />
         </button>
 
-        <div className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-2 lg:flex">
+        <div className="absolute items-center hidden gap-2 -translate-x-1/2 -translate-y-1/2 left-1/2 top-1/2 lg:flex">
           {slides.map((s, idx) => (
             <button
               key={s.id}
@@ -245,7 +245,7 @@ export default function PresentationPage() {
           ))}
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Link href="/about" className={glassPillSm}>
             Контакты
           </Link>
@@ -260,9 +260,9 @@ export default function PresentationPage() {
       <main ref={containerRef} className="relative z-10 mx-auto flex h-full w-full max-w-7xl flex-col items-center overflow-y-auto px-6 pb-16 pt-20 [scrollbar-width:none] sm:px-12 [&::-webkit-scrollbar]:hidden">
         <div
           key={current.id}
-          className="flex w-full m-auto flex-col items-center motion-safe:animate-fade-in"
+          className="flex flex-col items-center w-full m-auto motion-safe:animate-fade-in"
         >
-          <p className="shrink-0 mb-3 rounded-full border border-white/60 bg-white/40 px-3 py-1 text-xs uppercase text-gray-600 backdrop-blur-xl dark:border-white/20 dark:bg-white/10 dark:text-gray-200">
+          <p className="px-3 py-1 mb-3 text-xs text-gray-600 uppercase border rounded-full shrink-0 border-white/60 bg-white/40 backdrop-blur-xl dark:border-white/20 dark:bg-white/10 dark:text-gray-200">
             {current.badge}
           </p>
 
@@ -270,16 +270,16 @@ export default function PresentationPage() {
             {current.title}
           </h1>
 
-          <p className="shrink-0 mb-6 max-w-3xl text-center text-sm font-medium leading-relaxed text-gray-700 sm:text-base dark:text-gray-100">
+          <p className="max-w-3xl mb-6 text-sm font-medium leading-relaxed text-center text-gray-700 shrink-0 sm:text-base dark:text-gray-100">
             {current.subtitle}
           </p>
 
-          <div className="flex w-full shrink-0 justify-center">{current.content}</div>
+          <div className="flex justify-center w-full shrink-0">{current.content}</div>
         </div>
       </main>
 
-      <footer className="absolute inset-x-0 bottom-0 z-30 flex h-14 items-center justify-between px-6 sm:px-10">
-        <div className="flex items-center gap-2 text-sm font-mono text-gray-700 dark:text-gray-200">
+      <footer className="absolute inset-x-0 bottom-0 z-30 flex items-center justify-between px-6 h-14 sm:px-10">
+        <div className="flex items-center gap-2 font-mono text-sm text-gray-700 dark:text-gray-200">
           <span className="font-bold text-gray-900 dark:text-gray-100">{String(currentSlide + 1).padStart(2, '0')}</span>
           <span>/</span>
           <span>{String(totalSlides).padStart(2, '0')}</span>

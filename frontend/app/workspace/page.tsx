@@ -21,7 +21,7 @@ import { listProjects, createProject, updateProject, getProject, ProjectSummary 
 const DeckCityView = dynamic(() => import('@/components/city/DeckCityView'), {
   ssr: false,
   loading: () => (
-    <div className="flex h-[560px] w-full items-center justify-center rounded-xl border border-gray-700 bg-[#161a22] font-mono text-sm text-gray-400">
+    <div className="flex aspect-[960/620] w-full items-center justify-center rounded-2xl border border-white/10 bg-white/5 font-mono text-sm text-zinc-400 backdrop-blur-md">
       Загрузка 3D-двойника Deck.gl…
     </div>
   ),
@@ -31,15 +31,12 @@ export default function WorkspacePage() {
   const { ready, token } = useAuth();
   const router = useRouter();
 
-  // Вход — сразу в район: жюри видит схему, а не пустой холст.
   const [baseScenario, setBaseScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
   const [currentScenario, setCurrentScenario] = useState<DistrictScenario>(OBNINSK_2040_DISTRICT);
   const [selectedBuildingId, setSelectedBuildingId] = useState<string | null>('ob51-b3');
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'2d' | '3d'>('2d');
   const [toolMode, setToolMode] = useState<ToolMode>('select');
-
-  // Мобильный таб: на смартфонах переключаемся между чертежом и панелью аудита
   const [mobileTab, setMobileTab] = useState<'canvas' | 'inspector'>('canvas');
 
   const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
@@ -330,10 +327,25 @@ export default function WorkspacePage() {
       showHint('Элемент кольца: снос запрещён');
       return;
     }
-    setCurrentScenario((p) => ({
-      ...p,
-      edges: p.edges.filter((e) => e.id !== id),
-    }));
+    setCurrentScenario((prev) => {
+      const newEdges = prev.edges.filter((e) => e.id !== id);
+      const usedNodeIds = new Set<string>();
+      newEdges.forEach((e) => {
+        usedNodeIds.add(e.from);
+        usedNodeIds.add(e.to);
+      });
+      prev.buildings.forEach((b) => {
+        if (b.gateNodeId) usedNodeIds.add(b.gateNodeId);
+      });
+      prev.amenities.forEach((a) => {
+        if (a.nodeId) usedNodeIds.add(a.nodeId);
+      });
+      const newNodes = prev.nodes.filter((n) => {
+        if (n.isRoundabout || n.type === 'roundabout') return true;
+        return usedNodeIds.has(n.id);
+      });
+      return { ...prev, edges: newEdges, nodes: newNodes };
+    });
   };
 
   const handleSaveProject = async () => {
@@ -372,27 +384,41 @@ export default function WorkspacePage() {
 
   if (!ready || !token) {
     return (
-      <main className="mx-auto flex min-h-screen w-full max-w-sm flex-col justify-center px-6 py-6">
-        <p className="text-center font-medium text-sm text-gray-500">Инициализация…</p>
-      </main>
+      <div className="relative flex items-center justify-center min-h-screen bg-zinc-950">
+        <div
+          aria-hidden
+          className="fixed inset-0 pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(ellipse 80% 60% at 50% 40%, rgba(90,98,120,0.22), transparent 70%),' +
+              'radial-gradient(ellipse 60% 50% at 20% 80%, rgba(70,78,100,0.14), transparent 65%)',
+          }}
+        />
+        <p className="relative text-sm font-medium text-center text-zinc-400">
+          Инициализация…
+        </p>
+      </div>
     );
   }
 
   return (
-    <div
-      className="relative min-h-screen bg-cover bg-center text-gray-800 dark:text-gray-100"
-      style={{ backgroundImage: "url('/city.png')" }}
-    >
-      {/* Общая вуаль Liquid Glass */}
+    <div className="relative min-h-screen bg-zinc-950 text-zinc-100">
       <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-gradient-to-b from-white/30 via-white/10 to-white/40 dark:from-black/60 dark:via-black/40 dark:to-black/70"
+        aria-hidden
+        className="fixed inset-0 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(ellipse 100% 70% at 50% 30%, rgba(90,98,120,0.20), transparent 70%),' +
+            'radial-gradient(ellipse 80% 60% at 15% 80%, rgba(70,78,100,0.14), transparent 65%),' +
+            'radial-gradient(ellipse 70% 50% at 85% 75%, rgba(60,68,90,0.10), transparent 60%),' +
+            'linear-gradient(180deg, #0a0a0b 0%, #18181b 50%, #09090b 100%)',
+        }}
       />
 
-      <div className="relative z-10 flex min-h-screen flex-col pb-8">
+      <div className="relative z-10 flex flex-col min-h-screen pb-6">
         <AppHeader />
 
-        <main className="mx-auto w-full max-w-7xl px-3 pt-3 sm:px-6">
+        <main className="mx-auto w-full max-w-[1500px] px-4 pt-4 sm:px-6">
           <DistrictToolbar
             projectName={projectName}
             onProjectNameChange={setProjectName}
@@ -427,15 +453,12 @@ export default function WorkspacePage() {
             onSimSpeedChange={setSimSpeed}
           />
 
-          {/* Мобильный сегментированный контрол (только для малых экранов) */}
-          <div className="mb-3 flex rounded-full border border-white/60 bg-white/40 p-1 backdrop-blur-xl lg:hidden dark:border-white/20 dark:bg-white/10">
+          <div className="flex p-1 mb-3 border rounded-xl border-white/10 bg-white/5 backdrop-blur-md lg:hidden">
             <button
               type="button"
               onClick={() => setMobileTab('canvas')}
-              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
-                mobileTab === 'canvas'
-                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
-                  : 'text-gray-600 dark:text-gray-300'
+              className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-colors ${
+                mobileTab === 'canvas' ? 'bg-white/15 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               {viewMode === '2d' ? '2D Чертёж' : '3D Модель'}
@@ -443,74 +466,86 @@ export default function WorkspacePage() {
             <button
               type="button"
               onClick={() => setMobileTab('inspector')}
-              className={`flex-1 rounded-full py-1.5 text-xs font-semibold transition-all duration-200 ${
-                mobileTab === 'inspector'
-                  ? 'bg-white text-gray-900 shadow dark:bg-white/25 dark:text-white'
-                  : 'text-gray-600 dark:text-gray-300'
+              className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition-colors ${
+                mobileTab === 'inspector' ? 'bg-white/15 text-zinc-50' : 'text-zinc-400 hover:text-zinc-200'
               }`}
             >
               Аудит и метрики
             </button>
           </div>
 
-          {/* Основная рабочая область: 12-колоночный грид с адаптивным отображением */}
+          {/* Сетка: items-stretch (по умолчанию) выровняет высоту карты и сайдбара */}
           <div className="grid gap-4 lg:grid-cols-12">
-            <div className={`space-y-4 lg:col-span-8 ${mobileTab === 'inspector' ? 'hidden lg:block' : 'block'}`}>
-              {viewMode === '2d' ? (
-                <DistrictMap
-                  scenario={currentScenario}
-                  selectedBuildingId={selectedBuildingId}
-                  selectedEdgeId={selectedEdgeId}
-                  onSelectBuilding={setSelectedBuildingId}
-                  onSelectEdge={setSelectedEdgeId}
-                  activePathNodeIds={activePathNodeIds}
-                  edgeLoads={metrics.edgeLoads}
-                  toolMode={toolMode}
-                  onAddRoad={handleAddRoad}
-                  onAddPolyBuilding={handleAddPolyBuilding}
-                  onAddPolyPark={handleAddPolyPark}
-                  onAddCrossingDirect={handleAddCrossingDirect}
-                  onSplitAndBlockSpot={handleSplitAndBlockSpot}
-                  onUpgradeLanes={handleUpgradeLanes}
-                  onToggleSidewalk={handleToggleSidewalk}
-                  onMakeRoundabout={handleMakeRoundabout}
-                  onDeleteBuilding={(id) =>
-                    setCurrentScenario((p) => ({
-                      ...p,
-                      buildings: p.buildings.filter((b) => b.id !== id),
-                    }))
-                  }
-                  onDeleteEdge={handleDeleteEdge}
-                  onDeleteAmenity={(id) =>
-                    setCurrentScenario((p) => ({
-                      ...p,
-                      amenities: p.amenities.filter((a) => a.id !== id),
-                    }))
-                  }
-                />
-              ) : (
-                <DeckCityView
-                  scenario={currentScenario}
-                  selectedBuildingId={selectedBuildingId}
-                  onSelectBuilding={(id) => setSelectedBuildingId(id)}
-                  activePathNodeIds={activePathNodeIds}
-                  edgeLoads={metrics.edgeLoads}
-                  busPaths={metrics.busPaths}
-                  parkPaths={metrics.parkPaths}
-                  simPlaying={simPlaying}
-                  simSpeed={simSpeed}
-                />
-              )}
+            <div
+              className={`flex flex-col lg:col-span-8 ${
+                mobileTab === 'inspector' ? 'hidden lg:flex' : 'flex'
+              }`}
+            >
+              <div className="flex-1 w-full">
+                {viewMode === '2d' ? (
+                  <DistrictMap
+                    scenario={currentScenario}
+                    selectedBuildingId={selectedBuildingId}
+                    selectedEdgeId={selectedEdgeId}
+                    onSelectBuilding={setSelectedBuildingId}
+                    onSelectEdge={setSelectedEdgeId}
+                    activePathNodeIds={activePathNodeIds}
+                    edgeLoads={metrics.edgeLoads}
+                    toolMode={toolMode}
+                    onAddRoad={handleAddRoad}
+                    onAddPolyBuilding={handleAddPolyBuilding}
+                    onAddPolyPark={handleAddPolyPark}
+                    onAddCrossingDirect={handleAddCrossingDirect}
+                    onSplitAndBlockSpot={handleSplitAndBlockSpot}
+                    onUpgradeLanes={handleUpgradeLanes}
+                    onToggleSidewalk={handleToggleSidewalk}
+                    onMakeRoundabout={handleMakeRoundabout}
+                    onDeleteBuilding={(id) =>
+                      setCurrentScenario((p) => ({
+                        ...p,
+                        buildings: p.buildings.filter((b) => b.id !== id),
+                      }))
+                    }
+                    onDeleteEdge={handleDeleteEdge}
+                    onDeleteAmenity={(id) =>
+                      setCurrentScenario((p) => ({
+                        ...p,
+                        amenities: p.amenities.filter((a) => a.id !== id),
+                      }))
+                    }
+                  />
+                ) : (
+                  <DeckCityView
+                    scenario={currentScenario}
+                    selectedBuildingId={selectedBuildingId}
+                    onSelectBuilding={(id) => setSelectedBuildingId(id)}
+                    activePathNodeIds={activePathNodeIds}
+                    edgeLoads={metrics.edgeLoads}
+                    busPaths={metrics.busPaths}
+                    parkPaths={metrics.parkPaths}
+                    simPlaying={simPlaying}
+                    simSpeed={simSpeed}
+                  />
+                )}
+              </div>
             </div>
 
-            <div className={`lg:col-span-4 ${mobileTab === 'canvas' ? 'hidden lg:block' : 'block'}`}>
-              <DistrictSidebar
-                selectedBuilding={selectedBuilding}
-                selectedEdge={selectedEdge}
-                activePath={activePath}
-                metrics={metrics}
-                baseMetrics={baseMetrics}
-              />
+            {/* Сайдбар занимает всю доступную высоту карты. 
+                Если контента станет слишком много, он аккуратно скроллится. */}
+            <div
+              className={`flex flex-col lg:col-span-4 ${
+                mobileTab === 'canvas' ? 'hidden lg:flex' : 'flex'
+              }`}
+            >
+              <div className="h-full w-full overflow-y-auto pr-1 lg:[scrollbar-width:thin]">
+                <DistrictSidebar
+                  selectedBuilding={selectedBuilding}
+                  selectedEdge={selectedEdge}
+                  activePath={activePath}
+                  metrics={metrics}
+                  baseMetrics={baseMetrics}
+                />
+              </div>
             </div>
           </div>
         </main>
@@ -522,11 +557,10 @@ export default function WorkspacePage() {
           onSelectProject={handleLoadProject}
         />
 
-        {/* Стеклянный тост подсказок и инженерных предупреждений */}
         {hint && (
           <div
             key={hint.id}
-            className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 transform-gpu rounded-full border border-white/60 bg-white/70 px-5 py-2 text-center text-xs font-semibold text-gray-800 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_12px_32px_-8px_rgba(20,26,38,0.45)] backdrop-blur-2xl transition-all dark:border-white/20 dark:bg-gray-900/85 dark:text-gray-100"
+            className="fixed z-50 px-5 py-2 text-xs font-medium text-center -translate-x-1/2 border shadow-2xl bottom-6 left-1/2 rounded-xl border-white/15 bg-zinc-900/90 text-zinc-100 shadow-black/50 backdrop-blur-md"
             role="status"
           >
             {hint.text}

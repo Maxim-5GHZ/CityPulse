@@ -2,7 +2,6 @@
 'use client';
 
 import { ToolMode } from './DistrictMap';
-import { cadBtn, cadBtnActive } from './cadStyles';
 
 interface DistrictToolbarProps {
   projectName: string;
@@ -24,10 +23,12 @@ interface DistrictToolbarProps {
   onSimSpeedChange: (speed: 1 | 2 | 5) => void;
 }
 
-const glassPanelCls =
-  'rounded-[24px] border border-white/60 bg-white/40 p-2.5 backdrop-blur-xl backdrop-saturate-150 ' +
-  'shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),inset_-1px_-1px_2px_rgba(0,0,0,0.05),0_12px_30px_-10px_rgba(20,26,38,0.2)] ' +
-  'dark:border-white/20 dark:bg-gray-900/40';
+// Общий стиль панелей
+const panelCls = 'flex flex-wrap items-center gap-2 p-1.5 backdrop-blur-md';
+
+// Кнопки
+const btn = 'shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-white/10 hover:text-zinc-100';
+const btnActive = 'shrink-0 rounded-lg bg-white/15 px-3 py-1.5 text-xs font-medium text-zinc-50 transition-colors hover:bg-white/20 shadow-sm';
 
 export default function DistrictToolbar({
   projectName,
@@ -49,120 +50,85 @@ export default function DistrictToolbar({
   onSimSpeedChange,
 }: DistrictToolbarProps) {
   return (
-    <div className="mb-3 space-y-2">
-      {/* Верхняя строка проекта: имя + пресеты + сохранение */}
-      <div className={`${glassPanelCls} flex flex-wrap items-center justify-between gap-2.5`}>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <span className="shrink-0 text-xs font-semibold uppercase text-gray-500 dark:text-gray-300">
+    <div className="flex flex-col gap-2 mb-3">
+      {/* Верхняя строка: Проект и действия */}
+      <div className={`${panelCls} justify-between px-3 py-2`}>
+        <div className="flex items-center flex-1 gap-3">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
             Проект:
           </span>
           <input
             type="text"
             value={projectName}
             onChange={(e) => onProjectNameChange(e.target.value)}
-            className="w-full max-w-[200px] sm:max-w-xs transform-gpu rounded-full border border-white/60 bg-white/60 px-3.5 py-1 text-xs font-bold text-gray-800 shadow-[inset_0_2px_4px_rgba(0,0,0,0.06),inset_0_-1px_2px_rgba(255,255,255,0.9)] backdrop-blur-xl outline-none hover:scale-[1.02] focus:scale-[1.02] focus:border-blue-400 dark:border-white/20 dark:bg-white/10 dark:text-gray-100"
+            className="w-full max-w-[240px] rounded-md bg-transparent px-2 py-1 text-sm font-medium text-zinc-100 outline-none transition-colors hover:bg-white/5 focus:bg-white/10 border border-transparent focus:border-white/20"
           />
-          <span className="hidden text-xs text-gray-500 sm:inline dark:text-gray-400">
+          <span className="hidden text-xs text-zinc-500 sm:inline">
             [{buildingCount} зданий • {edgeCount} связей]
           </span>
         </div>
 
-        <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <button type="button" onClick={onLoadPreset} className={cadBtn}>
+        <div className="flex items-center gap-1 shrink-0">
+          <button type="button" onClick={onLoadPreset} className={btn}>
             Обнинск-51
           </button>
-          <button type="button" onClick={onClear} className={cadBtn}>
+          <button type="button" onClick={onClear} className={btn}>
             Очистить
           </button>
-          <button type="button" onClick={onOpenProjects} className={cadBtn}>
+          <button type="button" onClick={onOpenProjects} className={btn}>
             Проекты
           </button>
-          <button type="button" onClick={onSaveProject} disabled={isSaving} className={cadBtnActive}>
+          <div className="w-px h-4 mx-1 bg-white/10" />
+          <button
+            type="button"
+            onClick={onSaveProject}
+            disabled={isSaving}
+            className="shrink-0 rounded-lg bg-blue-600/80 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-50"
+          >
             {isSaving ? 'Запись…' : 'Сохранить'}
           </button>
         </div>
       </div>
 
-      {/* Панель инструментов: скроллируемый ряд пилюль */}
-      <div className={`${glassPanelCls} flex items-center justify-between gap-3`}>
+      {/* Нижняя строка: Инструменты САПР */}
+      <div className={`${panelCls} justify-between px-3 py-1.5`}>
         {viewMode === '2d' ? (
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <span className="mr-1 shrink-0 text-xs font-semibold uppercase text-gray-500 dark:text-gray-300">
+          <div className="flex flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <span className="mr-2 shrink-0 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
               САПР:
             </span>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('select')}
-              className={toolMode === 'select' ? cadBtnActive : cadBtn}
-            >
-              Выбор
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('road')}
-              className={toolMode === 'road' ? cadBtnActive : cadBtn}
-            >
-              Шоссе
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('sidewalk')}
-              className={toolMode === 'sidewalk' ? cadBtnActive : cadBtn}
-            >
-              Тротуар
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('crossing')}
-              className={toolMode === 'crossing' ? cadBtnActive : cadBtn}
-            >
-              Зебра
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('underpass')}
-              className={toolMode === 'underpass' ? cadBtnActive : cadBtn}
-            >
-              Подземный
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('poly_building')}
-              className={toolMode === 'poly_building' ? cadBtnActive : cadBtn}
-            >
-              Дом
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('poly_park')}
-              className={toolMode === 'poly_park' ? cadBtnActive : cadBtn}
-            >
-              Сквер
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('block_spot')}
-              className={toolMode === 'block_spot' ? cadBtnActive : cadBtn}
-            >
-              Ремонт
-            </button>
-            <button
-              type="button"
-              onClick={() => onToolModeChange('delete')}
-              className={toolMode === 'delete' ? cadBtnActive : cadBtn}
-            >
-              Снос
-            </button>
+            {(
+              [
+                ['select', 'Выбор'],
+                ['road', 'Шоссе'],
+                ['sidewalk', 'Тротуар'],
+                ['crossing', 'Зебра'],
+                ['underpass', 'Подземный'],
+                ['poly_building', 'Дом'],
+                ['poly_park', 'Сквер'],
+                ['block_spot', 'Ремонт'],
+                ['delete', 'Снос'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onToolModeChange(id as ToolMode)}
+                className={toolMode === id ? btnActive : btn}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         ) : (
-          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <span className="shrink-0 text-xs font-semibold uppercase text-gray-500 dark:text-gray-300">
+          <div className="flex flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <span className="mr-2 shrink-0 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
               Симуляция:
             </span>
             <button
               type="button"
               onClick={onToggleSimPlaying}
-              className={simPlaying ? cadBtn : cadBtnActive}
+              className={simPlaying ? btn : btnActive}
             >
               {simPlaying ? 'Пауза' : 'Старт'}
             </button>
@@ -172,31 +138,31 @@ export default function DistrictToolbar({
                   key={s}
                   type="button"
                   onClick={() => onSimSpeedChange(s)}
-                  className={simSpeed === s ? cadBtnActive : cadBtn}
+                  className={simSpeed === s ? btnActive : btn}
                 >
                   {s}x
                 </button>
               ))}
             </div>
-            <span className="hidden text-xs font-medium text-emerald-600 sm:inline dark:text-emerald-400">
-              • Пешеходные потоки Дейкстры активны
+            <span className="ml-2 hidden text-[11px] font-medium text-emerald-400 sm:inline">
+              • Потоки Дейкстры активны
             </span>
           </div>
         )}
 
         {/* Переключатель 2D / 3D */}
-        <div className="flex shrink-0 items-center gap-1 rounded-full border border-white/60 bg-white/40 p-0.5 backdrop-blur-xl dark:border-white/20 dark:bg-white/10">
+        <div className="ml-2 flex shrink-0 items-center gap-1 rounded-lg bg-black/20 p-0.5 border border-white/5">
           <button
             type="button"
             onClick={() => onViewModeChange('2d')}
-            className={viewMode === '2d' ? cadBtnActive : cadBtn}
+            className={viewMode === '2d' ? btnActive : btn}
           >
             2D
           </button>
           <button
             type="button"
             onClick={() => onViewModeChange('3d')}
-            className={viewMode === '3d' ? cadBtnActive : cadBtn}
+            className={viewMode === '3d' ? btnActive : btn}
           >
             3D
           </button>

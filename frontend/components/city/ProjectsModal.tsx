@@ -1,5 +1,6 @@
 'use client';
 
+import { X } from 'lucide-react';
 import { ProjectSummary } from '@/lib/projectApi';
 import { cadBtn, cadBtnActive } from './cadStyles';
 
@@ -20,28 +21,39 @@ export default function ProjectsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#141a26]/30 p-4 backdrop-blur-[2px] dark:bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[2px]"
       onClick={onClose}
     >
       <div
-        className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-[28px] border border-white/60 bg-white/70 p-5 shadow-[inset_1px_1px_2px_rgba(255,255,255,0.8),0_24px_60px_-12px_rgba(20,26,38,0.35)] backdrop-blur-2xl backdrop-saturate-150 dark:border-white/20 dark:bg-gray-900/70"
+        className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-2xl border border-white/10 bg-zinc-900/95 p-5 shadow-2xl shadow-black/50 backdrop-blur-md"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Сохранённые проекты"
       >
-        <h2 className="text-xs font-black uppercase tracking-tight text-gray-900 dark:text-gray-100">
-          Сохранённые проекты в Postgres
-        </h2>
-        <div className="mt-4 max-h-60 space-y-2 overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xs font-black tracking-tight uppercase text-zinc-100">
+            Сохранённые проекты в Postgres
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Закрыть"
+            className="rounded-lg p-1.5 text-zinc-400 transition-colors hover:bg-white/5 hover:text-zinc-100"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-2 overflow-y-auto max-h-60">
           {projects.length === 0 ? (
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Проектов нет.</p>
+            <p className="text-xs font-medium text-zinc-500">Проектов нет.</p>
           ) : (
             projects.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center justify-between gap-2 rounded-2xl border border-white/60 bg-white/50 p-2 pl-3 backdrop-blur-xl transition-all duration-200 hover:scale-[1.02] dark:border-white/15 dark:bg-white/10"
+                className="flex items-center justify-between gap-2 p-2 pl-3 transition-colors border rounded-xl border-white/10 bg-white/5 backdrop-blur-md hover:bg-white/10"
               >
-                <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-800 dark:text-gray-100">
+                <span className="flex-1 min-w-0 text-xs font-semibold truncate text-zinc-100">
                   {p.name}
                 </span>
                 <button
@@ -55,7 +67,8 @@ export default function ProjectsModal({
             ))
           )}
         </div>
-        <div className="mt-4 flex justify-end">
+
+        <div className="flex justify-end mt-4">
           <button type="button" onClick={onClose} className={cadBtn}>
             Закрыть
           </button>

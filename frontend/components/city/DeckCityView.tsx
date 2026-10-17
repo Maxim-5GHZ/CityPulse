@@ -33,60 +33,43 @@ interface DeckCityViewProps {
 
 type Vec3 = [number, number, number];
 
-// САПР (960×620, Y вниз) → мир Deck.gl (центр в нуле, север вверх, Z вверх).
 const toWorld = (x: number, y: number, z = 0): Vec3 => [x - 480, 320 - y, z];
 
-// Вертикальные уровни слоёв (метры мира): разнесены, чтобы геометрия
-// не z-файтила на скользящих углах камеры.
-const Z_PARK = 0.2; // земля/газоны
-const Z_UNDER = 0.35; // тоннель — под дорогой, но над землёй
-const Z_ROAD = 0.6; // проезжая часть
-const Z_RING = 0.65; // кольцо — чуть выше примыканий
-const Z_SIDEWALK = 0.9; // тротуары/переходы/тропы — над асфальтом
-const Z_FLOW = 2; // головы потоков — над разметкой
-const Z_ACTIVE_PATH = 2.5; // активный путь Дейкстры — поверх потоков
+const Z_PARK = 0.2; 
+const Z_UNDER = 0.35; 
+const Z_ROAD = 0.6; 
+const Z_RING = 0.65; 
+const Z_SIDEWALK = 0.9; 
+const Z_FLOW = 2; 
+const Z_ACTIVE_PATH = 2.5; 
 const Z_BUS_STOP = 3;
 
-// Ширина полотна (метры).
-const ROAD_WIDTH_WIDE = 22; // 4 полосы
-const ROAD_WIDTH_NARROW = 14; // 2 полосы / кольцо
+const ROAD_WIDTH_WIDE = 22; 
+const ROAD_WIDTH_NARROW = 14; 
 const CROSSING_WIDTH = 6;
-const MINOR_WIDTH = 4; // тротуары, велодорожки, тропы
+const MINOR_WIDTH = 4; 
 
-// Тепловая карта нагрузки (чел/час): WARN — порог bottleneck из metrics.ts:81,
-// CRIT — двойной порог.
 const HEAT_WARN = 400;
 const HEAT_CRIT = 800;
 
-// Сдвиг тротуара/велодорожки от оси дороги: половина узкой проезжей (7 м) +
-// зазор, чтобы линия не лежала на асфальте и не z-файтила с дорогой.
 const SIDEWALK_OFFSET_M = 7;
 
-// Заглушка парка (октагон): радиус из coverageRadiusM; кламп — чтобы не
-// накрывать соседние дороги и не схлопываться в точку.
 const DEFAULT_PARK_COVERAGE_M = 350;
 const PARK_RADIUS_DIVISOR = 5;
 const PARK_RADIUS_MIN = 28;
 const PARK_RADIUS_MAX = 70;
 
-// Скорость «головы» потоков на ×1, м/с: динамика видна без streak-эффекта
-// (было 45 м/с ≈ 162 км/ч).
 const FLOW_SPEED_BASE = 12;
 
-// Люди-точками: голова рейса + шлейф из точек позади (единицы — метры мира).
-const FLOW_DOT_RADIUS = 3.5; // человек — виден и вблизи, и издалека
-const FLOW_DOT_MIN_PIXELS = 3; // точки не схлопываются на дальнем зуме (демо с проектора)
-const FLOW_HALO_RADIUS = 9; // мягкое свечение вокруг человека
-const FLOW_TRAIL_DOTS = 4; // точек шлейфа за головой — направление читается без лент
-const FLOW_DOT_SPACING_M = 12; // шаг шлейфа
+const FLOW_DOT_RADIUS = 3.5; 
+const FLOW_DOT_MIN_PIXELS = 3; 
+const FLOW_HALO_RADIUS = 9; 
+const FLOW_TRAIL_DOTS = 4; 
+const FLOW_DOT_SPACING_M = 12; 
 
-// Ширина активного пути Дейкстры (метры).
 const ACTIVE_PATH_WIDTH = 7;
 
-// Подошва корпуса в координатах САПР: полигон как есть, иначе прямоугольник
-// с поворотом как в SVG 2D-карты (rotate(a) по часовой при a>0 в Y-вниз: знак +a).
 function buildingFootprintCAD(b: Building): [number, number][] {
-  // Вырожденный контур (<3 точек) — осознанный фолбэк в прямоугольник.
   if (b.polygon && b.polygon.length >= 3) {
     return b.polygon.map((p): [number, number] => [p.x, p.y]);
   }
@@ -109,7 +92,6 @@ function buildingFootprintCAD(b: Building): [number, number][] {
   });
 }
 
-// Сдвиг линии вбок (тротуары/велодорожки не лежат на оси дороги — иначе z-fight).
 function offsetLineCAD(
   ax: number,
   ay: number,
@@ -128,8 +110,6 @@ function offsetLineCAD(
   ];
 }
 
-// Сшивка дуговых рёбер кольца в непрерывные пути: стыки отдельных хорд
-// PathLayer не скругляет, поэтому кольцо едем одним объектом.
 function buildRingPaths(edges: GraphEdge[], nodeMap: Map<string, GraphNode>): Vec3[][] {
   const ring = edges.filter((e) => e.isRoundabout);
   if (ring.length === 0) return [];
@@ -148,8 +128,6 @@ function buildRingPaths(edges: GraphEdge[], nodeMap: Map<string, GraphNode>): Ve
   for (const seed of ring) {
     if (used.has(seed.id)) continue;
     used.add(seed.id);
-    // Обход кольца: у узла простого кольца степень ровно 2, поэтому выбор
-    // ребра, не ведущего назад, детерминирован. Обход ограничен числом рёбер.
     const seq: string[] = [seed.from, seed.to];
     let cur = seed.to;
     let prev = seed.from;
@@ -180,7 +158,6 @@ interface Trip {
   color: [number, number, number];
 }
 
-// Путь Дейкстры → «рейс»: метки времени = накопленная длина (метры), хвост догоняет голову.
 function pathToTrip(
   ids: string[],
   nodeMap: Map<string, GraphNode>,
@@ -208,9 +185,6 @@ interface FlowDot {
   color: [number, number, number];
 }
 
-// Точка на пути на «времени» t (метки — метры): бинпоиск сегмента + лерп.
-// Хвост идёт назад по вершинам, а не по прямой, — шлейф лежит на дороге
-// и не срезает повороты.
 function pointAtTime(trip: Trip, t: number): Vec3 {
   const { path, timestamps } = trip;
   if (t <= 0) return path[0];
@@ -231,8 +205,6 @@ function pointAtTime(trip: Trip, t: number): Vec3 {
   return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 }
 
-// Рейс → люди-точками: голова + шлейф позади. Время зациклено длиной пути,
-// поэтому поток бесконечный без телепортов в начало кадра.
 function sampleTripDots(trip: Trip, time: number): FlowDot[] {
   const total = trip.timestamps[trip.timestamps.length - 1] || 1;
   const dots: FlowDot[] = [];
@@ -243,7 +215,6 @@ function sampleTripDots(trip: Trip, time: number): FlowDot[] {
   return dots;
 }
 
-// Архитектурный свет для экструдированных корпусов (синглтоны — вне рендера).
 const ambientLight = new AmbientLight({ color: [255, 255, 255], intensity: 0.9 });
 const dirLight = new DirectionalLight({
   color: [255, 255, 255],
@@ -293,14 +264,11 @@ export default function DeckCityView({
     return m > 1 ? m : 100;
   }, [busTrips, parkTrips]);
 
-  // Колбэк выбора через ref: родитель передаёт инлайн-стрелку каждый рендер,
-  // ей не место в deps слоёв, иначе статика пересоздаётся постоянно.
   const selectRef = useRef(onSelectBuilding);
   useEffect(() => {
     selectRef.current = onSelectBuilding;
   }, [onSelectBuilding]);
 
-  // Уважение к prefers-reduced-motion: один статичный кадр вместо петли.
   const [reducedMotion, setReducedMotion] = useState(false);
   useEffect(() => {
     const q = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -310,7 +278,6 @@ export default function DeckCityView({
     return () => q.removeEventListener('change', fn);
   }, []);
 
-  // Игровая петля «головы» потоков; пауза и скорость — из тулбара симуляции.
   const [time, setTime] = useState(0);
   useEffect(() => {
     if (!simPlaying || reducedMotion) return;
@@ -326,8 +293,6 @@ export default function DeckCityView({
     return () => cancelAnimationFrame(raf);
   }, [simPlaying, simSpeed, maxTime, reducedMotion]);
 
-  // Время дальше нового maxTime (сценарий сменился) — клампим, иначе кадр
-  // без потоков до первого тика петли.
   useEffect(() => {
     setTime((t) => (t > maxTime ? 0 : t));
   }, [maxTime]);
@@ -341,8 +306,6 @@ export default function DeckCityView({
     return pts;
   }, [activePathNodeIds, nodeMap]);
 
-  // Центр кадра — по bbox сценария, а не жёсткий [0,0,0]: кастомные
-  // дороги из handleAddRoad иначе уезжают из вида. Однопроходный min/max.
   const viewTarget = useMemo<Vec3>(() => {
     let minX = Infinity;
     let maxX = -Infinity;
@@ -362,8 +325,6 @@ export default function DeckCityView({
     return [(minX + maxX) / 2 - 480, 320 - (minY + maxY) / 2, 0];
   }, [scenario.nodes, scenario.buildings]);
 
-  // Контролируемая камера: пользователь крутит свободно, за новым сценарием
-  // едем только target'ом — зум и наклон сохраняем.
   const [viewState, setViewState] = useState<OrbitViewState>({
     target: viewTarget,
     zoom: -0.9,
@@ -376,8 +337,6 @@ export default function DeckCityView({
     setViewState((v) => ({ ...v, target: viewTarget }));
   }, [viewTarget]);
 
-  // Статика: пересоздаётся только при смене сценария/выбора/нагрузок.
-  // Сюда НЕ входит time — иначе все слои rebuild'ились бы 60 раз/сек.
   const staticLayers = useMemo(() => {
     const parks = new PolygonLayer<Amenity>({
       id: 'parks-layer',
@@ -389,8 +348,6 @@ export default function DeckCityView({
         const n = nodeMap.get(p.nodeId);
         const cx = n?.x ?? 250;
         const cy = n?.y ?? 450;
-        // Октагон-заглушка из coverageRadiusM — fixed-прямоугольник
-        // накрывал соседние дороги.
         const r = Math.max(
           PARK_RADIUS_MIN,
           Math.min(
@@ -419,10 +376,6 @@ export default function DeckCityView({
         const u = nodeMap.get(e.from);
         const v = nodeMap.get(e.to);
         if (!u || !v) return [];
-        // Тоннель — под дорогой; остальное полотно и тропы — по оси.
-        // Сдвиг нужен только тротуарам/велодорожкам, иначе они лежат ровно
-        // на оси дороги и z-файтят. Парковые тропы тоже по оси — сдвиг
-        // выносил бы их за границу маленьких скверов.
         if (
           e.type === 'road' ||
           e.type === 'crossing' ||
@@ -440,8 +393,6 @@ export default function DeckCityView({
       },
       getColor: (e) => {
         if (!e.isActive) return [239, 68, 68, 220];
-        // Тепловая карта поверх всех типов: главные дороги иначе всегда
-        // тёмные и перегруз на них не виден.
         const load = edgeLoads[e.id] || 0;
         if (load > HEAT_CRIT) return [239, 68, 68, 230];
         if (load > HEAT_WARN) return [249, 115, 22, 230];
@@ -539,9 +490,6 @@ export default function DeckCityView({
     selectedBuildingId,
   ]);
 
-  // Динамика: только точки потоков зависят от time.
-  // Люди-точками: семплируем позиции голов и шлейфов на текущем time.
-  // Подсчёт — микросекунды (рейсов десятки), статика не трогается.
   const flowLayers = useMemo(() => {
     const dots: FlowDot[] = [];
     [...busTrips, ...parkTrips].forEach((trip) => {
@@ -569,7 +517,7 @@ export default function DeckCityView({
       radiusMinPixels: FLOW_DOT_MIN_PIXELS,
       stroked: true,
       lineWidthMinPixels: 1,
-      pickable: false, // точки не перехватывают клики по домам
+      pickable: false,
     });
 
     return [halo, people];
@@ -583,20 +531,27 @@ export default function DeckCityView({
   const peopleCount = busTrips.length + parkTrips.length;
   const ariaSummary = `3D-модель района: ${scenario.buildings.length} зданий, ${scenario.edges.length} участков дорог, потоки показаны движущимися точками — в пути ${peopleCount}.`;
 
+  const preventContextMenu = (e: React.MouseEvent) => e.preventDefault();
+
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-gray-700 bg-[#161a22] shadow-xl">
-      <div className="flex h-8 items-center justify-between border-b border-gray-700 bg-[#11141c] px-3 font-mono text-[11px] text-gray-300 select-none">
+    <div
+      className="relative flex flex-col w-full overflow-hidden border shadow-xl rounded-xl border-white/10 bg-zinc-900/40 backdrop-blur-md"
+      onContextMenu={preventContextMenu}
+    >
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-white/10 bg-white/5 px-3 font-mono text-[11px] text-zinc-300 select-none">
         <span className="font-semibold text-blue-400">
           3D ДВОЙНИК НА DECK.GL: ПОТОКИ ПО ДЕЙКСТРЕ
         </span>
-        <span className="text-gray-400">
+        <span className="text-zinc-500">
           ЛКМ: Вращение | ПКМ: Панорама | Колесо: Зум | В пути: {peopleCount}
         </span>
       </div>
+      {/* Задаем пропорции, чтобы высота 3D совпадала с 2D-картой */}
       <div
-        className="relative h-[560px] w-full cursor-grab active:cursor-grabbing"
+        className="relative aspect-[960/620] w-full cursor-grab active:cursor-grabbing"
         role="img"
         aria-label={ariaSummary}
+        onContextMenu={preventContextMenu}
       >
         <p className="sr-only">{ariaSummary}</p>
         <DeckGL
