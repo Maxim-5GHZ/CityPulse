@@ -18,8 +18,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    # V3__district_scenarios.sql добавлен после того, как V4 уже применился
-    # на существующих dev-базах — разрешаем догоняющую миграцию не по порядку.
+    # district_scenarios лежал в V3__district_scenarios.sql дублем версии 3 —
+    # Flyway падает на дублях ещё на валидации, out-of-order тут не помогал.
+    # Перенумеровано в V5 (V4 независим). out-of-order оставляем на будущее.
     out-of-order: true
   devtools:
     restart:
