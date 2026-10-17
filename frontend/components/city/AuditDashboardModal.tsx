@@ -35,8 +35,6 @@ interface AuditDashboardModalProps {
   baseMetrics: DistrictMetrics;
   impact: ResidentImpactSummary;
   history: HistorySnapshot[];
-  onFixBase: () => void;
-  onRollbackToBase: () => void;
 }
 
 type ChartMetric = 'busDist' | 'parkPct' | 'schoolPct' | 'mobilityPct' | 'budget';
@@ -63,8 +61,6 @@ export default function AuditDashboardModal({
   baseMetrics,
   impact,
   history,
-  onFixBase,
-  onRollbackToBase,
 }: AuditDashboardModalProps) {
   const [activeChartMetric, setActiveChartMetric] = useState<ChartMetric>('busDist');
 
@@ -225,7 +221,7 @@ export default function AuditDashboardModal({
   } else if (impact.worsenedResidents > impact.improvedResidents) {
     recommendations.push({ tone: 'bad', text: `Проигравших больше, чем выигравших: ${impact.worsenedResidents} против ${impact.improvedResidents} чел. — проверьте красные корпуса в режиме «Дифф».` });
   } else if (impact.worsenedResidents > 0) {
-    recommendations.push({ tone: 'warn', text: `В минусе ${impact.worsenedResidents} чел. (макс. +${impact.maxLossMeters} м) — детали в блоке «По домам» ниже.` });
+    recommendations.push({ tone: 'warn', text: `В минусе ${impact.worsenedResidents} чел. (макс. +${impact.maxLossMeters} м) — проверьте красные корпуса в режиме «Дифф».` });
   } else {
     recommendations.push({ tone: 'good', text: 'Баланс жителей не изменился: пути в пределах шума ±5 м.' });
   }
@@ -480,110 +476,26 @@ export default function AuditDashboardModal({
           </div>
         </div>
 
-        {/* Радар сфер и баланс жителей */}
-        <div className="mt-5 grid gap-4 md:grid-cols-2">
-          {/* Столбцы сфер доступности */}
-          <div className="rounded-3xl border border-white/60 bg-white/40 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-            <h3 className="border-b border-white/40 pb-2 text-xs font-black uppercase tracking-tight text-gray-900 dark:border-white/10 dark:text-gray-100">
-              Баланс городской среды (15-минутный район)
-            </h3>
-            <div className="mt-3 space-y-2.5">
-              {domains.map((dom) => (
-                <div key={dom.label} className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-gray-700 dark:text-gray-200">{dom.label}</span>
-                    <span className="font-bold text-gray-900 dark:text-gray-100">{dom.raw}</span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200/60 dark:bg-gray-700/60">
-                    <div
-                      style={{ width: `${Math.min(100, Math.max(0, dom.score))}%`, backgroundColor: dom.color }}
-                      className="h-full rounded-full transition-all duration-300"
-                    />
-                  </div>
+        {/* Баланс сфер доступности */}
+        <div className="mt-5 rounded-3xl border border-white/60 bg-white/40 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
+          <h3 className="border-b border-white/40 pb-2 text-xs font-black uppercase tracking-tight text-gray-900 dark:border-white/10 dark:text-gray-100">
+            Баланс городской среды (15-минутный район)
+          </h3>
+          <div className="mt-3 space-y-2.5">
+            {domains.map((dom) => (
+              <div key={dom.label} className="space-y-1">
+                <div className="flex justify-between text-xs font-semibold">
+                  <span className="text-gray-700 dark:text-gray-200">{dom.label}</span>
+                  <span className="font-bold text-gray-900 dark:text-gray-100">{dom.raw}</span>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Баланс жителей */}
-          <div className="rounded-3xl border border-white/60 bg-white/40 p-4 shadow-sm dark:border-white/10 dark:bg-white/5">
-            <h3 className="border-b border-white/40 pb-2 text-xs font-black uppercase tracking-tight text-gray-900 dark:border-white/10 dark:text-gray-100">
-              Социальный аудит: выигрыш жителей
-            </h3>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-2">
-                <div className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">В плюсе</div>
-                <div className="text-lg font-black text-emerald-600 dark:text-emerald-400">{impact.improvedResidents}</div>
-                <div className="text-[9px] text-gray-500">человек</div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200/60 dark:bg-gray-700/60">
+                  <div
+                    style={{ width: `${Math.min(100, Math.max(0, dom.score))}%`, backgroundColor: dom.color }}
+                    className="h-full rounded-full transition-all duration-300"
+                  />
+                </div>
               </div>
-              <div className="rounded-2xl border border-gray-400/20 bg-gray-400/10 p-2">
-                <div className="text-[10px] font-bold text-gray-600 dark:text-gray-300">Без изм.</div>
-                <div className="text-lg font-black text-gray-700 dark:text-gray-200">{impact.unchangedResidents}</div>
-                <div className="text-[9px] text-gray-500">человек</div>
-              </div>
-              <div className="rounded-2xl border border-rose-500/20 bg-rose-500/10 p-2">
-                <div className="text-[10px] font-bold text-rose-700 dark:text-rose-400">В минусе</div>
-                <div className="text-lg font-black text-rose-600 dark:text-rose-400">{impact.worsenedResidents}</div>
-                <div className="text-[9px] text-gray-500">человек</div>
-              </div>
-            </div>
-
-            <div className="mt-3 space-y-1.5 text-xs text-gray-600 dark:text-gray-300">
-              {impact.maxSavedMeters > 0 && (
-                <div className="flex items-center gap-1.5 font-semibold text-emerald-600 dark:text-emerald-400">
-                  <span>✓</span> Максимальный выигрыш дома: −{impact.maxSavedMeters} м пешком
-                </div>
-              )}
-              {impact.maxLossMeters > 0 && (
-                <div className="flex items-center gap-1.5 font-semibold text-rose-600 dark:text-rose-400">
-                  <span>⚠️</span> Максимальный проигрыш дома: +{impact.maxLossMeters} м пешком
-                </div>
-              )}
-              {metrics.bottlenecks.length > 0 && (
-                <div className="flex items-center gap-1.5 font-semibold text-amber-600 dark:text-amber-400">
-                  <span>⚠️</span> Обнаружено узких мест пешеходного трафика: {metrics.bottlenecks.length}
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" onClick={onFixBase} className={cadBtn}>
-                📌 Зафиксировать «ДО»
-              </button>
-              <button type="button" onClick={onRollbackToBase} className={cadBtn}>
-                ↩ Откатить к «ДО»
-              </button>
-            </div>
-
-            {(impact.worsenedResidents > 0 || impact.improvedResidents > 0) && (
-              <details className="mt-3 rounded-2xl border border-white/60 bg-white/30 px-3 py-2 dark:border-white/15 dark:bg-white/5">
-                <summary className="cursor-pointer text-xs font-bold uppercase tracking-tight text-gray-700 dark:text-gray-200">
-                  По домам: кто выиграл и проиграл (путь до остановки)
-                </summary>
-                <div className="mt-2 space-y-0.5 text-xs">
-                  {impact.buildings
-                    .filter((b) => b.deltaM !== null && b.deltaM > 5)
-                    .sort((a, b) => (b.deltaM ?? 0) - (a.deltaM ?? 0))
-                    .slice(0, 5)
-                    .map((b) => (
-                      <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
-                        <span className="truncate">{b.name} · {b.residents} чел.</span>
-                        <b className="shrink-0 tabular-nums text-rose-600 dark:text-rose-400">+{b.deltaM} м</b>
-                      </div>
-                    ))}
-                  {impact.buildings
-                    .filter((b) => b.deltaM !== null && b.deltaM < -5)
-                    .sort((a, b) => (a.deltaM ?? 0) - (b.deltaM ?? 0))
-                    .slice(0, 5)
-                    .map((b) => (
-                      <div key={b.id} className="flex justify-between gap-2 text-gray-600 dark:text-gray-300">
-                        <span className="truncate">{b.name} · {b.residents} чел.</span>
-                        <b className="shrink-0 tabular-nums text-emerald-600 dark:text-emerald-400">{b.deltaM} м</b>
-                      </div>
-                    ))}
-                </div>
-              </details>
-            )}
+            ))}
           </div>
         </div>
 

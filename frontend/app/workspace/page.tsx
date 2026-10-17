@@ -795,8 +795,6 @@ export default function WorkspacePage() {
           baseMetrics={baseMetrics}
           impact={impact}
           history={historySnapshots}
-          onFixBase={handleFixBase}
-          onRollbackToBase={handleRollbackToBase}
         />
 
         {/* Стеклянный тост подсказок и инженерных предупреждений */}

@@ -190,7 +190,7 @@ export default function NetworkGraphSimulator() {
           className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'bus'
               ? 'bg-blue-600 text-white shadow-md'
-              : 'border border-white/60 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
+              : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
           Транспортная доступность (M1)
@@ -201,7 +201,7 @@ export default function NetworkGraphSimulator() {
           className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'park'
               ? 'bg-emerald-600 text-white shadow-md'
-              : 'border border-white/60 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
+              : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
           Рекреация и соцобъекты (M2)
@@ -212,7 +212,7 @@ export default function NetworkGraphSimulator() {
           className={`transform-gpu rounded-full px-4 py-1.5 text-xs font-bold transition-all duration-200 ease-out hover:scale-[1.05] active:scale-[0.98] motion-reduce:transform-none motion-reduce:transition-none ${
             mode === 'repair'
               ? 'bg-rose-600 text-white shadow-md'
-              : 'border border-white/60 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
+              : 'border border-gray-400/50 bg-white/70 text-gray-800 hover:bg-white/90 dark:border-white/20 dark:bg-white/20 dark:text-gray-100'
           }`}
         >
           Срезы и «народные тропы»

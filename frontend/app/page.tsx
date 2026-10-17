@@ -23,13 +23,13 @@ const cardCls =
   'dark:border-white/20 dark:bg-gray-900/60';
 
 const glassPill =
-  'inline-block min-w-40 transform-gpu rounded-full border border-white/60 bg-white/70 px-4 py-1.5 text-center text-sm font-bold text-gray-800 backdrop-blur-xl ' +
+  'inline-block min-w-40 transform-gpu rounded-full border border-gray-400/50 bg-white/70 px-4 py-1.5 text-center text-sm font-bold text-gray-800 shadow-sm backdrop-blur-xl ' +
   'transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-white/90 active:scale-[0.98] ' +
   'motion-reduce:transform-none motion-reduce:transition-none ' +
   'dark:border-white/20 dark:bg-white/20 dark:text-gray-100 dark:hover:bg-white/30';
 
 const glassPillSm =
-  'inline-block transform-gpu rounded-full border border-white/60 bg-white/70 px-4 py-1.5 text-center text-sm font-bold text-gray-800 backdrop-blur-xl ' +
+  'inline-block transform-gpu rounded-full border border-gray-400/50 bg-white/70 px-4 py-1.5 text-center text-sm font-bold text-gray-800 shadow-sm backdrop-blur-xl ' +
   'transition-all duration-200 ease-out hover:scale-[1.05] hover:bg-white/90 active:scale-[0.98] ' +
   'motion-reduce:transform-none motion-reduce:transition-none ' +
   'dark:border-white/20 dark:bg-white/20 dark:text-gray-100 dark:hover:bg-white/30';
